@@ -1,0 +1,42 @@
+# Filesystem Output
+project: runs/segment
+name: yolo-seg-baseline-no-aug
+exist_ok: false
+
+# Logging
+wandb: true
+
+# Core
+model: yolo11n-seg.pt
+data: dataset.yaml
+epochs: 50
+imgsz: 640
+batch: 16
+device: 0          # 0 = erste GPU, "cpu" geht auch
+patience: 10
+seed: 42
+deterministic: true
+
+# Output artefacts
+save: true
+plots: true
+
+# ===== Augmentations AUS =====
+degrees: 0.0
+translate: 0.0
+scale: 0.0
+shear: 0.0
+perspective: 0.0
+flipud: 0.0
+fliplr: 0.0
+
+hsv_h: 0.0
+hsv_s: 0.0
+hsv_v: 0.0
+
+mosaic: 0.0
+mixup: 0.0
+copy_paste: 0.0
+erasing: 0.0
+auto_augment: null
+close_mosaic: 0
