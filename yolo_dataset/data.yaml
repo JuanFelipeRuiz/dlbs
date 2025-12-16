@@ -1,0 +1,20 @@
+# Dataset paths
+train: images/train
+val: images/val
+test: images/test
+
+# Number of classes
+nc: 10
+
+# Class names (YOLO format: list of class names indexed by class ID)
+names:
+  0: person
+  1: rider
+  2: car
+  3: truck
+  4: bus
+  5: caravan
+  6: trailer
+  7: train
+  8: motorcycle
+  9: bicycle
