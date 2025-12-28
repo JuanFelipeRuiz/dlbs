@@ -1,6 +1,6 @@
 # Filesystem Output
 project: runs/segment
-name: yolo-seg-baseline-no-aug
+name: yolo-seg-overfit-no-aug
 exist_ok: false
 
 # Logging
@@ -8,12 +8,12 @@ wandb: true
 
 # Core
 model: yolo11n-seg.pt
-data: dataset_yolo\data.yaml
-epochs: 50
+data: dataset_yolo_overfit\data_overfit.yaml
+epochs: 1000
 imgsz: 640
-batch: 16
+batch: 1
 device: cuda          # 0 = erste GPU, "cpu" geht auch
-patience: 10
+patience: 1000
 seed: 42
 deterministic: true
 
