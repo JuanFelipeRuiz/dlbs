@@ -1,0 +1,46 @@
+# Filesystem Output
+project: runs/segment
+name: yolo-seg-reg-l2-ls
+exist_ok: false
+
+# Logging
+wandb: true
+
+# Core
+model: yolo11n-seg.pt
+data: dataset_yolo\data.yaml
+epochs: 50
+imgsz: 640
+batch: 16
+device: cuda
+patience: 10
+seed: 42
+deterministic: true
+
+# Output artefacts
+save: true
+plots: true
+
+# ===== Regularization (Optimizer/Loss) =====
+weight_decay: 0.002
+label_smoothing: 0.05
+
+# ===== Augmentations AUS (wie Baseline) =====
+degrees: 0.0
+translate: 0.0
+scale: 0.0
+shear: 0.0
+perspective: 0.0
+flipud: 0.0
+fliplr: 0.0
+
+hsv_h: 0.0
+hsv_s: 0.0
+hsv_v: 0.0
+
+mosaic: 0.0
+mixup: 0.0
+copy_paste: 0.0
+erasing: 0.0
+auto_augment: null
+close_mosaic: 0
