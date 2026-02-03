@@ -5,10 +5,12 @@ exist_ok: false
 
 # Logging
 wandb: true
+wandb_entity: dlbs-jf
+wandb_project: runs_segment
 
 # Core
 model: yolo11n-seg.pt
-data: dataset_yolo\data.yaml
+data: /mnt/nas05/data01/slg-q1/dlbs/dataset_yolo/data.yaml
 epochs: 50
 imgsz: 640
 batch: 16
