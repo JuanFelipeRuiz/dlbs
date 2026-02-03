@@ -8,7 +8,7 @@ wandb: true
 
 # Core
 model: yolo11n-seg.pt
-data: /mnt/nas05/data01/slg-q1/dlbs/dataset_yolo/data.yaml
+data: /mnt/nas05/data01/slg-q1/dlbs/yolo_dataset/data.yaml
 epochs: 50
 imgsz: 640
 batch: 16

@@ -19,7 +19,7 @@ mkdir -p logs
 
 # ---- (Optional) Performance/Determinismus ----
 export OMP_NUM_THREADS="${SLURM_CPUS_PER_TASK}"
-#export WANDB_API_KEY="DEINTOKEN"
+#export WANDB_API_KEY="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"
 
 # ---- Train starten ----
 CONFIG="configs/overfit_no_aug.yaml"
