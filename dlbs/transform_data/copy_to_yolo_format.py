@@ -1,239 +1,205 @@
 """
-Prepare YOLO dataset structure from DataFrame.
+Prepare a YOLO dataset folder structure from a DataFrame.
 
-Creates YOLO-friendly folder structure and copies/links images and annotations.
+Creates:
+yolo/
+  images/{train,val,test}/
+  labels/{train,val,test}/
+and copies images + .txt labels into the matching split.
 """
 
 import logging
 import shutil
 from pathlib import Path
-from typing import Optional, Union
+
 import pandas as pd
 
 logger = logging.getLogger(__name__)
 
 
 def copy_to_yolo_format(
-    df: pd.DataFrame,
-    output_dir: Union[str, Path] = "yolo",
-    annotation_col: str = "instance_based_yolo",
-    image_col: str = "image_path",
-    split_col: str = "split",
-    base_dir: Optional[Union[str, Path]] = None,
-) -> dict:
+    df,
+    output_dir="yolo",
+    annotation_col="instance_based_yolo",
+    image_col="image_path",
+    split_col="split",
+    base_dir=None,
+):
     """
-    Copy or link YOLO annotations and images to YOLO-friendly folder structure.
-    
-    Creates structure:
-    yolo/
-      images/
-        train/
-        val/
-        test/
-      labels/
-        train/
-        val/
-        test/
-    
-    Parameters:
-    -----------
-    df : pd.DataFrame
-        DataFrame with columns: annotation_col, image_col, split_col
-    output_dir : str or Path
-        Output directory name (default: "yolo")
-    annotation_col : str
-        Column name with YOLO annotation paths (default: "instance_based_yolo")
-    image_col : str
-        Column name with image paths (default: "image_path")
-    split_col : str
-        Column name with split information (default: "split")
-    base_dir : str or Path, optional
-        Base directory for resolving relative paths. If None, uses current working directory.
-    
+    Copy YOLO annotations and images into YOLO-friendly folders.
+
+    Args:
+        df: DataFrame with columns [annotation_col, image_col, split_col]
+        output_dir: Target root directory (created if missing)
+        annotation_col: Column with .txt label paths
+        image_col: Column with image paths
+        split_col: Column with split values: train/val/test
+        base_dir: Resolve relative paths against this directory (default: cwd)
+
     Returns:
-    --------
-    dict: Statistics about copied/linked files
+        dict with per-split counts of copied images and labels
     """
     output_dir = Path(output_dir)
-    
-    # Use provided base_dir or current working directory
-    if base_dir is None:
-        base_dir = Path.cwd()
-    else:
-        base_dir = Path(base_dir)
-    
-    logger.debug(f"Base directory for path resolution: {base_dir}")
-    logger.debug(f"Output directory: {output_dir}")
-    logger.debug(f"Annotation column: {annotation_col}")
-    logger.debug(f"Image column: {image_col}")
-    logger.debug(f"Split column: {split_col}")
-    
-    # Create directory structure
-    logger.debug("Creating directory structure...")
-    for split in ["train", "val", "test"]:
-        (output_dir / "images" / split).mkdir(parents=True, exist_ok=True)
-        (output_dir / "labels" / split).mkdir(parents=True, exist_ok=True)
-        logger.debug(f"Created directories for split: {split}")
-    
+    base_dir = Path(base_dir) if base_dir is not None else Path.cwd()
+
+    _make_structure(output_dir)
+
     stats = {
         "train": {"images": 0, "labels": 0},
         "val": {"images": 0, "labels": 0},
-        "test": {"images": 0, "labels": 0}
+        "test": {"images": 0, "labels": 0},
     }
-    
-    logger.debug(f"Using copy mode")
-    logger.debug(f"Processing {len(df)} rows from DataFrame")
-    
+
+    logger.debug("Processing %d rows", len(df))
+
     for idx, row in df.iterrows():
-        # Get paths
-        ann_path_str = row.get(annotation_col, "")
-        img_path_str = row.get(image_col, "")
+        ann_raw = row.get(annotation_col, "")
+        img_raw = row.get(image_col, "")
         split = str(row.get(split_col, "train")).lower()
-        
-        # Validate
-        if pd.isna(ann_path_str) or not ann_path_str or str(ann_path_str) == "":
-            logger.debug(f"Row {idx}: Skipping - no annotation path")
+
+        ok, split = _validate_row(idx, ann_raw, img_raw, split)
+        if not ok:
             continue
-        if pd.isna(img_path_str) or not img_path_str or str(img_path_str) == "":
-            logger.debug(f"Row {idx}: Skipping - no image path")
+
+        ann_path = _resolve_path(ann_raw, base_dir)
+        img_path = _resolve_path(img_raw, base_dir)
+
+        if not ann_path or not ann_path.is_file():
+            logger.debug("Row %s: annotation missing: %s", idx, ann_path)
             continue
-        if split not in ["train", "val", "test"]:
-            logger.debug(f"Row {idx}: Invalid split '{split}', using 'train'")
-            split = "train"
-        
-        # Resolve paths: handle both absolute and relative paths
-        # Normalize path separators (handle both / and \)
-        ann_path_str = str(ann_path_str).replace("\\", "/")
-        img_path_str = str(img_path_str).replace("\\", "/")
-        
-        # If path starts with ../, remove it and treat as relative to base_dir
-        # (since paths in CSV are relative to repo root but may have ../ prefix)
-        if ann_path_str.startswith("../"):
-            # Remove ../ prefix and resolve relative to base_dir
-            ann_path_str_clean = ann_path_str[3:]  # Remove "../"
-            ann_path = (base_dir / ann_path_str_clean).resolve()
-        elif ann_path_str.startswith("./"):
-            # Remove ./ prefix
-            ann_path_str_clean = ann_path_str[2:]  # Remove "./"
-            ann_path = (base_dir / ann_path_str_clean).resolve()
-        elif Path(ann_path_str).is_absolute():
-            # Absolute path
-            ann_path = Path(ann_path_str).resolve()
-        else:
-            # Relative path without ../
-            ann_path = (base_dir / ann_path_str).resolve()
-        
-        if img_path_str.startswith("../"):
-            img_path_str_clean = img_path_str[3:]  # Remove "../"
-            img_path = (base_dir / img_path_str_clean).resolve()
-        elif img_path_str.startswith("./"):
-            img_path_str_clean = img_path_str[2:]  # Remove "./"
-            img_path = (base_dir / img_path_str_clean).resolve()
-        elif Path(img_path_str).is_absolute():
-            img_path = Path(img_path_str).resolve()
-        else:
-            img_path = (base_dir / img_path_str).resolve()
-        
-        logger.debug(f"Row {idx}: Resolved paths - ann: {ann_path}, img: {img_path}")
-        
-        # Check if files exist
-        if not ann_path.exists() or not ann_path.is_file():
-            logger.debug(f"Row {idx}: Annotation file not found: {ann_path}")
+        if not img_path or not img_path.is_file():
+            logger.debug("Row %s: image missing: %s", idx, img_path)
             continue
-        if not img_path.exists() or not img_path.is_file():
-            logger.debug(f"Row {idx}: Image file not found: {img_path}")
-            continue
-        
-        # Get filenames (must match: image.png -> image.txt)
-        img_filename = img_path.name
-        label_filename = img_path.stem + ".txt"
-        
-        # Destination paths
-        dest_img = output_dir / "images" / split / img_filename
-        dest_label = output_dir / "labels" / split / label_filename
-        
-        logger.debug(f"Row {idx}: Processing {img_filename} (split: {split})")
-        
-        # Copy files
+
+        dest_img, dest_label = _dest_paths(output_dir, split, img_path)
         try:
-            logger.debug(f"Row {idx}: Copying {img_path.name} -> {dest_img}")
-            shutil.copy2(img_path, dest_img)
-            logger.debug(f"Row {idx}: Copying {ann_path.name} -> {dest_label}")
-            shutil.copy2(ann_path, dest_label)
+            _copy_pair(img_path, dest_img, ann_path, dest_label)
             stats[split]["images"] += 1
             stats[split]["labels"] += 1
-            if (stats[split]["images"] + stats[split]["labels"]) % 100 == 0:
-                logger.debug(f"Progress: {stats[split]['images']} images, {stats[split]['labels']} labels processed for {split}")
         except Exception as e:
-            logger.warning(f"Row {idx}: Failed to copy files - {e}")
+            logger.warning("Row %s: copy failed: %s", idx, e)
             continue
-    
-    # Print summary
+
+    _log_summary(output_dir, stats)
+    return stats
+
+
+def _make_structure(root):
+    """
+    Create images/ and labels/ directories for train/val/test.
+    """
+    for split in ("train", "val", "test"):
+        (root / "images" / split).mkdir(parents=True, exist_ok=True)
+        (root / "labels" / split).mkdir(parents=True, exist_ok=True)
+
+
+def _validate_row(idx, ann_raw, img_raw, split):
+    """
+    Validate basic fields and normalize the split value.
+    """
+    if pd.isna(ann_raw) or not str(ann_raw).strip():
+        logger.debug("Row %s: no annotation path", idx)
+        return False, split
+    if pd.isna(img_raw) or not str(img_raw).strip():
+        logger.debug("Row %s: no image path", idx)
+        return False, split
+    if split not in ("train", "val", "test"):
+        logger.debug("Row %s: invalid split '%s' -> 'train'", idx, split)
+        split = "train"
+    return True, split
+
+
+def _normalize_path_str(p):
+    """
+    Normalize path separators and strip leading './' or '../' when present.
+    """
+    s = str(p).replace("\\", "/")
+    if s.startswith("./"):
+        return s[2:]
+    if s.startswith("../"):
+        return s[3:]
+    return s
+
+
+def _resolve_path(raw, base_dir):
+    """
+    Resolve a raw string path to an absolute Path under base_dir when relative.
+    """
+    raw = str(raw)
+    # absolute path
+    if Path(raw).is_absolute():
+        return Path(raw).resolve()
+
+    # handle ../ and ./ against base_dir
+    cleaned = _normalize_path_str(raw)
+    return (base_dir / cleaned).resolve()
+
+
+def _dest_paths(root, split, img_path):
+    """
+    Return destination file paths for image and label within the YOLO tree.
+    """
+    img_dst = root / "images" / split / img_path.name
+    label_name = img_path.stem + ".txt"
+    label_dst = root / "labels" / split / label_name
+    return img_dst, label_dst
+
+
+def _copy_pair(src_img, dst_img, src_label, dst_label):
+    """
+    Copy image and label to their destinations, overwriting if present.
+    """
+    shutil.copy2(src_img, dst_img)
+    shutil.copy2(src_label, dst_label)
+
+
+def _log_summary(root, stats):
+    """
+    Log a readable summary of copied files.
+    """
     total_images = sum(s["images"] for s in stats.values())
     total_labels = sum(s["labels"] for s in stats.values())
-    logger.info(f"Copied {total_images} images and {total_labels} labels to {output_dir}/")
-    logger.info(f"  Train: {stats['train']['images']} images, {stats['train']['labels']} labels")
-    logger.info(f"  Val: {stats['val']['images']} images, {stats['val']['labels']} labels")
-    if stats['test']['images'] > 0:
-        logger.info(f"  Test: {stats['test']['images']} images, {stats['test']['labels']} labels")
-    
-    return stats
+    logger.info("Copied %d images and %d labels to %s/", total_images, total_labels, root)
+    logger.info("  Train: %d images, %d labels", stats["train"]["images"], stats["train"]["labels"])
+    logger.info("  Val:   %d images, %d labels", stats["val"]["images"], stats["val"]["labels"])
+    if stats["test"]["images"] > 0 or stats["test"]["labels"] > 0:
+        logger.info("  Test:  %d images, %d labels", stats["test"]["images"], stats["test"]["labels"])
 
 
 if __name__ == "__main__":
     import sys
-    
-    from pathlib import Path
-    
-    # Find the data directory
-    # File is at: dlbs/transform_data/prepare_yolo_dataset.py
-    # Repo root is: dlbs/
-    # Assume script is executed from repo root
+
+    logging.basicConfig(level=logging.DEBUG, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+
     repo_root = Path.cwd()
     csv_path = repo_root / "data" / "overview_df.csv"
-    
-    logger.debug(f"Repo root: {repo_root}")
-    logger.debug(f"CSV path: {csv_path}")
-    
-    if not csv_path.exists():
-        logger.error(f"CSV file not found: {csv_path}")
-        sys.exit(1)
-    
-    # Configure logging
-    logging.basicConfig(
-        level=logging.DEBUG,
-        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-    )
-    
-    # Read overview DataFrame
-    logger.info(f"Reading {csv_path}")
-    overview_df = pd.read_csv(csv_path)
-    logger.debug(f"Loaded DataFrame with {len(overview_df)} rows")
-    logger.debug(f"DataFrame columns: {list(overview_df.columns)}")
 
-    overview_df.loc[overview_df["city"] == "zurich", "split"] = "test"
-    
-    # Check required columns
-    required_cols = ["instance_based_yolo", "image_path", "split"]
-    missing_cols = [col for col in required_cols if col not in overview_df.columns]
-    if missing_cols:
-        logger.warning(f"Missing columns in DataFrame: {missing_cols}")
+    if not csv_path.exists():
+        logger.error("CSV file not found: %s", csv_path)
+        sys.exit(1)
+
+    logger.info("Reading %s", csv_path)
+    overview_df = pd.read_csv(csv_path)
+
+    # exclude the Zurich for the test split
+    if "city" in overview_df.columns:
+        overview_df.loc[overview_df["city"].astype(str).str.lower() == "zurich", "split"] = "test"
+
+    # sanity check on the first label path 
+    if "instance_based_yolo" in overview_df.columns and len(overview_df) > 0:
+        first_path = str(overview_df.iloc[0]["instance_based_yolo"])
+        if first_path.startswith("/"):
+            first_path = first_path[1:]
+        if first_path and not (repo_root / _normalize_path_str(first_path)).exists():
+            logger.error("Path %s does not exist (relative to %s)", first_path, repo_root)
+            sys.exit(1)
     else:
-        logger.debug("All required columns found")
-    
-    # Check for non-null values
-    logger.debug(f"Rows with instance_based_yolo: {overview_df['instance_based_yolo'].notna().sum()}")
-    logger.debug(f"Rows with image_path: {overview_df['image_path'].notna().sum()}")
-    logger.debug(f"Split distribution: {overview_df['split'].value_counts().to_dict()}")
-    
-    # Run with default parameters
+        logger.error("Column 'instance_based_yolo' not found in DataFrame")
+        sys.exit(1)
+
     logger.info("Starting YOLO dataset preparation...")
     stats = copy_to_yolo_format(
-        overview_df, 
-        output_dir="yolo_dataset", 
-        base_dir=repo_root  # Use repo root as base for resolving relative paths
+        overview_df,
+        output_dir="yolo_dataset",
+        base_dir=repo_root,
     )
-    
-    print("\n✅ Dataset preparation complete!")
-    print(f"Output directory: yolo_dataset/")
-

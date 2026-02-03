@@ -63,8 +63,9 @@ def save_resolved_cfg(save_dir: Path, cfg: dict, cfg_path: str):
 def train(cfg_path: str, cli_overrides: dict):
     cfg = load_cfg(cfg_path)
 
-    # W&B togglen (Ultralytics)
-    settings.update({"wandb": bool(cfg.pop("wandb", True))})
+    # W&B togglen (Ultralytics) - speichere den Wert vor dem pop
+    wandb_enabled = bool(cfg.pop("wandb", True))
+    settings.update({"wandb": wandb_enabled})
 
     # Optional: WANDB_PROJECT/ENTITY via YAML setzen, ohne hart an Ultralytics gebunden zu sein
     wandb_project = cfg.pop("wandb_project", None)
@@ -85,6 +86,17 @@ def train(cfg_path: str, cli_overrides: dict):
 
     model_path = cfg.pop("model")
     model = YOLO(model_path)
+
+    # Add custom wandb callbacks if wandb is enabled
+    if wandb_enabled:
+        try:
+            from yolocustom_wand import add_custom_callbacks
+            add_custom_callbacks(model)
+            print("✓ Custom wandb callbacks added")
+        except ImportError as e:
+            print(f"⚠️ Could not import custom wandb callbacks: {e}")
+        except Exception as e:
+            print(f"⚠️ Could not add custom wandb callbacks: {e}")
 
     # Train
     results = model.train(**cfg)
