@@ -1,6 +1,5 @@
 #!/bin/bash
 #SBATCH -p performance
-#SBATCH -w calc-g-008
 #SBATCH --job-name=dlbs_wandb
 #SBATCH --gpus=1
 #SBATCH --cpus-per-task=8
@@ -8,7 +7,7 @@
 #SBATCH --time=4:00:00
 #SBATCH --output=logs/%x_%A_%a.out
 #SBATCH --error=logs/%x_%A_%a.err
-#SBATCH --array=0-4
+#SBATCH --array=0-1
 
 set -euo pipefail
 
@@ -35,7 +34,7 @@ mkdir -p "$WANDB_DIR"
 source .venv/bin/activate
 
 # One run per array task
-srun wandb agent --count 1 "dlbs-jf/runs_segment/${RAW_SWEEP_ID}"
+srun wandb agent --count 1 "dlbs-jf/runs-segment/${RAW_SWEEP_ID}"
 
 echo
 echo "Finished at: $(date)"
