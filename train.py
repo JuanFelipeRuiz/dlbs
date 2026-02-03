@@ -3,14 +3,17 @@ usage:
     python train.py --cfg configs/baseline_no_aug.yaml
     python train.py --cfg configs/aug_default.yaml --epochs 100
     python train.py --cfg configs/aug_strong.yaml --set lr0=0.005 --set cos_lr=true
+    python train.py --cfg configs/baseline_no_aug.yaml --seed 123
 
 '''
 
 import argparse
 import os
+import random
 from pathlib import Path
 import yaml
 import torch
+import numpy as np
 from ultralytics import YOLO, settings
 
 
@@ -60,8 +63,28 @@ def save_resolved_cfg(save_dir: Path, cfg: dict, cfg_path: str):
     print(f"✓ Resolved config gespeichert: {out}")
 
 
+def set_seed(seed: int):
+    """Set random seed for reproducibility."""
+    if seed is not None:
+        random.seed(seed)
+        np.random.seed(seed)
+        torch.manual_seed(seed)
+        torch.cuda.manual_seed_all(seed)
+        # Set deterministic mode for CUDA operations
+        torch.backends.cudnn.deterministic = True
+        torch.backends.cudnn.benchmark = False
+        print(f"Set Seed: {seed}")
+
+
 def train(cfg_path: str, cli_overrides: dict):
     cfg = load_cfg(cfg_path)
+
+    # Seed setzen (vor allem anderen, falls in CLI oder Config gesetzt)
+    seed = cli_overrides.get("seed", cfg.get("seed", None))
+    if seed is not None:
+        set_seed(seed)
+        # Seed auch in cfg setzen für Ultralytics
+        cfg["seed"] = seed
 
     # W&B togglen (Ultralytics) - speichere den Wert vor dem pop
     wandb_enabled = bool(cfg.pop("wandb", True))
@@ -81,7 +104,7 @@ def train(cfg_path: str, cli_overrides: dict):
     # Device fallback
     dev = cfg.get("device", None)
     if dev in [0, "0", "cuda", "cuda:0"] and not torch.cuda.is_available():
-        print("⚠️ CUDA nicht verfügbar → fallback auf CPU.")
+        print("CUDA nicht verfügbar → fallback auf CPU.")
         cfg["device"] = "cpu"
 
     model_path = cfg.pop("model")
@@ -92,11 +115,11 @@ def train(cfg_path: str, cli_overrides: dict):
         try:
             from yolocustom_wand import add_custom_callbacks
             add_custom_callbacks(model)
-            print("✓ Custom wandb callbacks added")
+            print("Custom wandb callbacks added")
         except ImportError as e:
-            print(f"⚠️ Could not import custom wandb callbacks: {e}")
+            print(f"Could not import custom wandb callbacks: {e}")
         except Exception as e:
-            print(f"⚠️ Could not add custom wandb callbacks: {e}")
+            print(f"Could not add custom wandb callbacks: {e}")
 
     # Train
     results = model.train(**cfg)
@@ -123,6 +146,7 @@ if __name__ == "__main__":
     p.add_argument("--imgsz", type=int)
     p.add_argument("--device", type=str)
     p.add_argument("--name", type=str)
+    p.add_argument("--seed", type=int, help="Random seed for reproducibility (overrides config)")
     p.add_argument("--set", action="append", default=[], help="Beliebige Overrides: key=value (mehrfach)")
 
     args = p.parse_args()
@@ -136,6 +160,7 @@ if __name__ == "__main__":
         "imgsz": args.imgsz,
         "device": args.device,
         "name": args.name,
+        "seed": args.seed,
     }
 
     # zusätzliche --set key=value Paare
