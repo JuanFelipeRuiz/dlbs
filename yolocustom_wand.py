@@ -1,12 +1,27 @@
-import logging
+"""
+Ultralytics YOLO Segmentation + W&B (clean version)
+
+Logs:
+- first validation batch GT + predictions (every epoch)
+- per-class segmentation metrics (every epoch)
+
+No debug logs.
+No custom step metrics.
+No validator.plots access.
+Fully Ultralytics-docs compliant.
+"""
+
 import inspect
+import logging
 import numpy as np
 import wandb
 
 logger = logging.getLogger(__name__)
 
-DEBUG = True
 
+# -------------------------
+# helpers
+# -------------------------
 
 def _wandb_ready() -> bool:
     return wandb.run is not None
@@ -31,7 +46,7 @@ def _metric_container(validator):
     return getattr(m, "seg", None) or getattr(m, "mask", None)
 
 
-def _get_per_class_seg_arrays_from_validator(validator):
+def _get_per_class_seg_arrays(validator):
     names = getattr(validator, "names", None) or {}
     if not names:
         return None
@@ -74,70 +89,56 @@ def _epoch_from_validator(validator) -> int:
 
 def on_val_batch_end(validator):
     """
-    Docs-style: access locals from the validator loop frame and call validator plotting.
-    We only plot the FIRST validation batch (batch_i == 0).
+    Ultralytics docs pattern:
+    Access validation loop locals via inspect and call plotting functions.
     """
     if not _wandb_ready():
         return
 
     try:
-        # exactly like Ultralytics docs: go two frames back to get locals
         frame = inspect.currentframe().f_back.f_back
         v = frame.f_locals
 
         batch_i = v.get("batch_i", None)
         if batch_i is None or int(batch_i) != 0:
-            return  # only first batch
+            return
 
         batch = v.get("batch", None)
         preds = v.get("preds", None)
         if batch is None or preds is None:
             return
 
-        # This will generate and save GT + Pred images in the validator's save_dir
-        # and typically populate validator.plots as well.
+        # Generate GT + prediction plots
         validator.plot_val_samples(batch, batch_i)
         validator.plot_predictions(batch, preds, batch_i)
 
-        if DEBUG:
-            # Log a tiny debug marker at CURRENT global step (no out-of-order from our side)
-            wandb.log({"custom/debug/val_first_batch_plotted": 1}, step=wandb.run.step)
-
     except Exception as e:
-        logger.exception(f"on_val_batch_end failed: {e}")
+        logger.warning(f"val batch plotting failed: {e}")
 
 
 def on_val_end(validator):
     """
-    After validation: metrics are ready here (docs say use on_val_end for validation logic).
-    Log per-class seg metrics at the CURRENT global step to avoid step warnings.
+    After validation → metrics are ready here.
+    Log per-class segmentation metrics.
     """
     if not _wandb_ready():
         return
 
     epoch = _epoch_from_validator(validator)
+    log = {"epoch": epoch}
 
-    log = {
-        "custom/epoch": epoch,
-    }
-
-    arr = _get_per_class_seg_arrays_from_validator(validator)
+    arr = _get_per_class_seg_arrays(validator)
     if arr:
         classes, P, R, AP50 = arr
         for i, name in enumerate(classes):
             name = str(name).strip()
             if name.lower() in ("background", "bg", ""):
                 continue
-            log[f"custom/metrics/seg/precision/{name}"] = float(P[i])
-            log[f"custom/metrics/seg/recall/{name}"] = float(R[i])
-            log[f"custom/metrics/seg/mAP50/{name}"] = float(AP50[i])
+            log[f"metrics/seg/precision/{name}"] = float(P[i])
+            log[f"metrics/seg/recall/{name}"] = float(R[i])
+            log[f"metrics/seg/mAP50/{name}"] = float(AP50[i])
 
-    if DEBUG:
-        plots = getattr(validator, "plots", None) or {}
-        log["custom/debug/plots_keys"] = ", ".join(sorted(list(plots.keys()))[:80])
-        log["custom/debug/has_seg_or_mask"] = int(_metric_container(validator) is not None)
-
-    # IMPORTANT: log at current global step to avoid "out of order" from our callback
+    # log at current global step → avoids out-of-order warnings from OUR code
     wandb.log(log, step=wandb.run.step)
 
 
