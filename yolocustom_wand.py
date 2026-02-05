@@ -1,29 +1,34 @@
 """
-YOLO (Ultralytics 8.3.x) + W&B callbacks (SEG) with DEBUG mode.
+YOLO (Ultralytics 8.3.x) + W&B callbacks (SEG) – val-dependent logging moved to on_val_end.
+
+WHY:
+In Ultralytics 8.3.x, validator.plots and validator.metrics.(seg|mask) are often finalized
+only at `on_val_end(validator)`. If you read them in `on_fit_epoch_end(trainer)`, they can be empty.
 
 What it does:
-- At BEGIN of each TRAIN epoch:
-  - logs a "dummy" (fictive) plot so you can verify per-epoch media logging works:
-    plots/debug_dummy_epoch_start
 
-- At END of each FIT epoch (i.e., after validation):
-  - logs per-class seg metrics:
-    metrics/seg/precision/<class>
-    metrics/seg/recall/<class>
-    metrics/seg/mAP50/<class>
-  - logs first val batch GT + Pred plots (if available):
-    predictions/val_first_batch_gt
-    predictions/val_first_batch_pred
+1) BEGIN of each TRAIN epoch (on_train_epoch_start):
+   - logs a dummy "fictive" plot to confirm per-epoch media logging works:
+     plots/debug_dummy_epoch_start
 
-DEBUG mode additionally logs (to W&B + optionally prints):
-- debug/plots_keys
-- debug/has_validator, debug/has_metrics, debug/has_seg, debug/has_mask
-- debug/p_info, debug/r_info, debug/ap50_info, debug/ap_info
-- debug/gt_key_present, debug/pred_key_present
+2) END of VALIDATION (on_val_end):
+   - logs per-class seg metrics:
+     metrics/seg/precision/<class>
+     metrics/seg/recall/<class>
+     metrics/seg/mAP50/<class>
+   - logs first val-batch visuals (GT + Pred) if available:
+     predictions/val_first_batch_gt
+     predictions/val_first_batch_pred
+   - logs debug signals to pinpoint what exists / what's missing:
+     debug/*
+
+3) FINAL epoch only (inside on_val_end, once metrics exist):
+   - logs per-class bar plot:
+     plots/final_per_class_metrics
 
 Notes:
-- Assumes wandb is installed.
-- Waits for wandb.run to exist (Ultralytics initializes W&B internally).
+- Assumes wandb is installed. (No wandb-is-None checks)
+- Still waits for `wandb.run` to exist (Ultralytics initializes W&B internally).
 - Uses wandb.define_metric so "epoch" is the x-axis for our logged keys.
 """
 
@@ -34,30 +39,31 @@ import wandb
 
 logger = logging.getLogger(__name__)
 
-DEBUG = True          # set False to silence debug logs
-DEBUG_PRINT = False   # set True if you also want stdout prints
+DEBUG = True          # set False to silence debug logs to W&B
+DEBUG_PRINT = False   # set True to also print debug to stdout
 
 
 # -------------------------
-# small trainer state
+# helpers
 # -------------------------
-
-def _state(trainer):
-    if not hasattr(trainer, "_custom_wb"):
-        trainer._custom_wb = {
-            "config_pushed": False,
-            "metrics_defined": False,
-        }
-    return trainer._custom_wb
-
 
 def _wandb_ready() -> bool:
     return wandb.run is not None
 
 
-def _ensure_wandb_config(trainer):
+def _state(obj):
+    """Attach minimal state to either trainer or validator (anything with __dict__)."""
+    if not hasattr(obj, "_custom_wb"):
+        obj._custom_wb = {"config_pushed": False, "metrics_defined": False}
+    return obj._custom_wb
+
+
+def _ensure_wandb_config(trainer_or_validator):
     if not _wandb_ready():
         return
+
+    # trainer args live on trainer; validator often has .trainer
+    trainer = getattr(trainer_or_validator, "trainer", None) or trainer_or_validator
     st = _state(trainer)
     if st["config_pushed"]:
         return
@@ -75,9 +81,11 @@ def _ensure_wandb_config(trainer):
         st["config_pushed"] = True
 
 
-def _define_epoch_metrics_once(trainer):
+def _define_epoch_metrics_once(trainer_or_validator):
     if not _wandb_ready():
         return
+
+    trainer = getattr(trainer_or_validator, "trainer", None) or trainer_or_validator
     st = _state(trainer)
     if st["metrics_defined"]:
         return
@@ -94,17 +102,21 @@ def _define_epoch_metrics_once(trainer):
         st["metrics_defined"] = True
 
 
-def _is_final_epoch(trainer) -> bool:
+def _epoch_from(trainer_or_validator) -> int:
+    # validator has .trainer, which has .epoch (0-based)
+    trainer = getattr(trainer_or_validator, "trainer", None) or trainer_or_validator
+    return int(getattr(trainer, "epoch", 0)) + 1
+
+
+def _is_final_epoch(trainer_or_validator) -> bool:
+    trainer = getattr(trainer_or_validator, "trainer", None) or trainer_or_validator
     total = int(getattr(trainer, "epochs", 0) or 0)
     ep = int(getattr(trainer, "epoch", 0)) + 1
     return total > 0 and ep == total
 
 
-# -------------------------
-# robust array conversion (handles [] in Ultralytics 8.3.x)
-# -------------------------
-
 def _to_arr(x, n):
+    """Ultralytics metrics may return [] when not available."""
     if x is None:
         return None
     if isinstance(x, (list, tuple)) and len(x) == 0:
@@ -116,24 +128,23 @@ def _to_arr(x, n):
     return np.nan_to_num(a, nan=0.0, posinf=0.0, neginf=0.0)
 
 
-# -------------------------
-# per-class seg metrics from validator
-# -------------------------
-
-def _get_per_class_seg_arrays(trainer):
-    v = getattr(trainer, "validator", None)
-    if v is None:
+def _metric_container(validator):
+    m = getattr(validator, "metrics", None)
+    if m is None:
         return None
+    return getattr(m, "seg", None) or getattr(m, "mask", None)
 
-    names = getattr(v, "names", None) or {}
+
+def _get_per_class_seg_arrays_from_validator(validator):
+    """
+    Returns (classes, P, R, AP50) or None.
+    Works on validator directly (preferred for on_val_end).
+    """
+    names = getattr(validator, "names", None) or {}
     if not names:
         return None
 
-    m = getattr(v, "metrics", None)
-    if m is None:
-        return None
-
-    seg = getattr(m, "seg", None) or getattr(m, "mask", None)
+    seg = _metric_container(validator)
     if seg is None:
         return None
 
@@ -156,24 +167,16 @@ def _get_per_class_seg_arrays(trainer):
 
     if P is None or R is None or AP50 is None:
         return None
-
     return classes, P, R, AP50
 
 
-# -------------------------
-# val batch GT vs Pred (8.3.x common keys)
-# -------------------------
+def _get_first_val_batch_gt_pred(validator):
+    """
+    Returns (gt, pred, plots_dict).
+    In Ultralytics 8.3.x plots are commonly file paths.
+    """
+    plots = getattr(validator, "plots", None) or {}
 
-def _get_first_val_batch_gt_pred(trainer):
-    v = getattr(trainer, "validator", None)
-    if v is None:
-        return None, None, {}, None
-
-    plots = getattr(v, "plots", None) or {}
-    if not plots:
-        return None, None, plots, None
-
-    # Prefer explicit first-batch keys
     gt = plots.get("val_batch0_labels") or plots.get("val_batch_labels")
     pred = plots.get("val_batch0_pred") or plots.get("val_batch_pred")
 
@@ -181,25 +184,10 @@ def _get_first_val_batch_gt_pred(trainer):
     if pred is None:
         pred = plots.get("val_batch0") or plots.get("val_batch")
 
-    # which "seg container" exists?
-    m = getattr(v, "metrics", None)
-    seg = getattr(m, "seg", None) if m else None
-    mask = getattr(m, "mask", None) if m else None
-    seg_container = seg or mask
-
-    return gt, pred, plots, seg_container
+    return gt, pred, plots
 
 
-# -------------------------
-# plotting
-# -------------------------
-
-def _plot_per_class_bar(trainer):
-    arr = _get_per_class_seg_arrays(trainer)
-    if not arr:
-        return None
-
-    classes, P, R, AP50 = arr
+def _plot_per_class_bar(classes, P, R, AP50):
     keep = [i for i, n in enumerate(classes) if str(n).strip().lower() not in ("background", "bg")]
     if not keep:
         return None
@@ -229,7 +217,6 @@ def _plot_per_class_bar(trainer):
 
 
 def _make_dummy_plot(epoch: int):
-    """Small 'fictive' plot to verify per-epoch media logging works."""
     fig, ax = plt.subplots(figsize=(6, 2.5))
     ax.plot([0, 1], [0, 1], marker="o")
     ax.set_title(f"DEBUG dummy plot @ epoch {epoch}")
@@ -241,7 +228,6 @@ def _make_dummy_plot(epoch: int):
 
 
 def _info(x):
-    """Describe a metric object for debug logs."""
     if x is None:
         return "None"
     if isinstance(x, (list, tuple)):
@@ -265,8 +251,7 @@ def on_pretrain_routine_start(trainer):
 
 def on_train_epoch_start(trainer):
     """
-    Called at the beginning of each train epoch.
-    Logs a dummy plot so you can confirm per-epoch logging works even before val.
+    Begin of train epoch: log a dummy plot to verify per-epoch media logging works.
     """
     if not _wandb_ready():
         return
@@ -274,7 +259,7 @@ def on_train_epoch_start(trainer):
     _ensure_wandb_config(trainer)
     _define_epoch_metrics_once(trainer)
 
-    epoch = int(getattr(trainer, "epoch", 0)) + 1
+    epoch = _epoch_from(trainer)
     log = {"epoch": epoch}
 
     try:
@@ -290,24 +275,23 @@ def on_train_epoch_start(trainer):
     wandb.log(log)
 
 
-def on_fit_epoch_end(trainer):
+def on_val_end(validator):
     """
-    Called after validation each epoch.
-    Logs per-class seg metrics + GT/PRED first val batch visuals.
-    Also logs debug signals to pinpoint what is missing.
+    End of validation: THIS is where Ultralytics 8.3.x usually has plots+metrics ready.
+    We log val-dependent stuff here.
     """
     if not _wandb_ready():
         return
 
-    _ensure_wandb_config(trainer)
-    _define_epoch_metrics_once(trainer)
+    _ensure_wandb_config(validator)
+    _define_epoch_metrics_once(validator)
 
-    epoch = int(getattr(trainer, "epoch", 0)) + 1
+    epoch = _epoch_from(validator)
     log = {"epoch": epoch}
 
     try:
-        # --- per-class seg scalars
-        arr = _get_per_class_seg_arrays(trainer)
+        # --- per-class seg scalars (validation-derived)
+        arr = _get_per_class_seg_arrays_from_validator(validator)
         if arr:
             classes, P, R, AP50 = arr
             for i, name in enumerate(classes):
@@ -318,46 +302,43 @@ def on_fit_epoch_end(trainer):
                 log[f"metrics/seg/recall/{name}"] = float(R[i])
                 log[f"metrics/seg/mAP50/{name}"] = float(AP50[i])
 
-        # --- first val batch visuals (GT + Pred)
-        gt, pred, plots, seg_container = _get_first_val_batch_gt_pred(trainer)
+            # final epoch: per-class bar plot (now we *know* arrays exist)
+            if _is_final_epoch(validator):
+                fig = _plot_per_class_bar(classes, P, R, AP50)
+                if fig is not None:
+                    log["plots/final_per_class_metrics"] = wandb.Image(fig, caption="Final per-class metrics")
+                    plt.close(fig)
+
+        # --- val batch visuals (GT + Pred)
+        gt, pred, plots = _get_first_val_batch_gt_pred(validator)
         if gt is not None:
             log["predictions/val_first_batch_gt"] = wandb.Image(gt, caption=f"GT epoch {epoch}")
         if pred is not None:
             log["predictions/val_first_batch_pred"] = wandb.Image(pred, caption=f"Pred epoch {epoch}")
 
-        # --- final epoch plot
-        if _is_final_epoch(trainer):
-            fig = _plot_per_class_bar(trainer)
-            if fig is not None:
-                log["plots/final_per_class_metrics"] = wandb.Image(fig, caption="Final per-class metrics")
-                plt.close(fig)
-
         # --- DEBUG signals
         if DEBUG:
-            v = getattr(trainer, "validator", None)
-            m = getattr(v, "metrics", None) if v else None
+            m = getattr(validator, "metrics", None)
             seg = getattr(m, "seg", None) if m else None
             mask = getattr(m, "mask", None) if m else None
+            container = seg or mask
 
-            log["debug/has_validator"] = int(v is not None)
+            log["debug/has_validator"] = 1
             log["debug/has_metrics"] = int(m is not None)
             log["debug/has_seg"] = int(seg is not None)
             log["debug/has_mask"] = int(mask is not None)
 
             keys = sorted(list((plots or {}).keys()))
-            log["debug/plots_keys"] = ", ".join(keys[:60])  # keep it short
+            log["debug/plots_keys"] = ", ".join(keys[:80])
 
-            # show presence of key candidates
             log["debug/gt_key_present"] = int(any(k in (plots or {}) for k in ("val_batch0_labels", "val_batch_labels")))
             log["debug/pred_key_present"] = int(any(k in (plots or {}) for k in ("val_batch0_pred", "val_batch_pred", "val_batch0", "val_batch")))
 
-            # metric arrays info
-            target = seg_container
-            if target is not None:
-                log["debug/p_info"] = _info(getattr(target, "p", None))
-                log["debug/r_info"] = _info(getattr(target, "r", None))
-                log["debug/ap50_info"] = _info(getattr(target, "ap50", None))
-                log["debug/ap_info"] = _info(getattr(target, "ap", None))
+            if container is not None:
+                log["debug/p_info"] = _info(getattr(container, "p", None))
+                log["debug/r_info"] = _info(getattr(container, "r", None))
+                log["debug/ap50_info"] = _info(getattr(container, "ap50", None))
+                log["debug/ap_info"] = _info(getattr(container, "ap", None))
             else:
                 log["debug/p_info"] = "no(seg|mask)"
                 log["debug/r_info"] = "no(seg|mask)"
@@ -365,13 +346,13 @@ def on_fit_epoch_end(trainer):
                 log["debug/ap_info"] = "no(seg|mask)"
 
             if DEBUG_PRINT:
-                print(f"[DEBUG] epoch={epoch} keys={keys[:20]}")
+                print(f"[DEBUG] on_val_end epoch={epoch}")
+                print(f"[DEBUG] plots keys (head): {keys[:25]}")
                 print(f"[DEBUG] seg={type(seg)} mask={type(mask)}")
                 print(f"[DEBUG] p={log['debug/p_info']} r={log['debug/r_info']} ap50={log['debug/ap50_info']} ap={log['debug/ap_info']}")
 
     except Exception as e:
-        logger.exception(f"Custom callback crashed at epoch {epoch}: {e}")
-        # Still log something so you see the epoch reached fit-end
+        logger.exception(f"Custom on_val_end crashed at epoch {epoch}: {e}")
         if DEBUG:
             log["debug/callback_crashed"] = 1
             log["debug/callback_error"] = str(e)[:500]
@@ -383,7 +364,7 @@ def add_custom_callbacks(model):
     callbacks = {
         "on_pretrain_routine_start": on_pretrain_routine_start,
         "on_train_epoch_start": on_train_epoch_start,  # dummy plot here
-        "on_fit_epoch_end": on_fit_epoch_end,          # val-dependent stuff here
+        "on_val_end": on_val_end,                      # VAL-dependent logging here
     }
     for event, cb in callbacks.items():
         model.add_callback(event, cb)
