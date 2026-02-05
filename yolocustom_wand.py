@@ -6,17 +6,20 @@ Each validation epoch:
   metrics/seg/precision/<class>
   metrics/seg/recall/<class>
   metrics/seg/mAP50/<class>
-- logs first validation batch visualization (GT vs Pred masks):
-  predictions/val_first_batch
+- logs first validation batch visualization (GT + Pred masks as separate images):
+  predictions/val_first_batch_gt
+  predictions/val_first_batch_pred
 
 Final epoch only:
 - logs per-class bar plot (P/R/mAP50):
   plots/final_per_class_metrics
 
 Notes:
+- Assumes wandb is installed.
 - Waits for wandb.run to exist (Ultralytics initializes W&B internally).
 - Uses W&B define_metric so "epoch" is the x-axis for our logged keys.
-- Logs exactly once per epoch (single wandb.log call).
+- Logs exactly once per epoch (single wandb.log call, commit=True default).
+- Does NOT log best model artifacts (Ultralytics already logs best.pt/last.pt).
 """
 
 import logging
@@ -41,7 +44,7 @@ def _state(trainer):
 
 
 def _wandb_ready() -> bool:
-    # Ultralytics does wandb.init() internally; callbacks can run before that.
+    # Ultralytics does wandb.init() internally; callbacks may run before that.
     return wandb.run is not None
 
 
@@ -78,6 +81,7 @@ def _define_epoch_metrics_once(trainer):
         wandb.define_metric("predictions/*", step_metric="epoch")
         wandb.define_metric("plots/*", step_metric="epoch")
     except Exception as e:
+        # Not fatal; logging still works, but x-axis might be default W&B step.
         logger.warning(f"wandb.define_metric failed: {e}")
     finally:
         st["metrics_defined"] = True
@@ -89,9 +93,26 @@ def _is_final_epoch(trainer) -> bool:
     return total > 0 and ep == total
 
 
-def _nan0(x, n):
-    x = np.asarray(x, dtype=float).reshape(-1)[:n]
-    return np.nan_to_num(x, nan=0.0, posinf=0.0, neginf=0.0)
+# -------------------------
+# robust array conversion (handles [] in Ultralytics 8.3.x)
+# -------------------------
+
+def _to_arr(x, n):
+    """
+    Convert metric output to (n,) float array, or None.
+    Ultralytics metrics may return [] when not available.
+    """
+    if x is None:
+        return None
+    if isinstance(x, (list, tuple)) and len(x) == 0:
+        return None
+
+    a = np.asarray(x, dtype=float).reshape(-1)
+    if a.size < n:
+        return None
+
+    a = a[:n]
+    return np.nan_to_num(a, nan=0.0, posinf=0.0, neginf=0.0)
 
 
 # -------------------------
@@ -101,7 +122,7 @@ def _nan0(x, n):
 def _get_per_class_seg_arrays(trainer):
     """
     Returns (classes, P, R, AP50) or None.
-    Tries metrics.seg first, then metrics.mask (version-dependent).
+    Tries metrics.seg first, then metrics.mask (Ultralytics version-dependent).
     """
     v = getattr(trainer, "validator", None)
     if v is None:
@@ -119,28 +140,24 @@ def _get_per_class_seg_arrays(trainer):
     if seg is None:
         return None
 
-    p = getattr(seg, "p", None)
-    r = getattr(seg, "r", None)
-    ap50 = getattr(seg, "ap50", None)
-    ap = getattr(seg, "ap", None)
-
-    # not ready yet
-    if p is None and r is None and ap50 is None and ap is None:
-        return None
-
     classes = [names[i] for i in sorted(names)]
     nc = len(classes)
 
-    P = None if p is None else _nan0(p, nc)
-    R = None if r is None else _nan0(r, nc)
+    P = _to_arr(getattr(seg, "p", None), nc)
+    R = _to_arr(getattr(seg, "r", None), nc)
 
-    if ap50 is not None:
-        AP50 = _nan0(ap50, nc)
-    elif ap is not None:
-        ap = np.asarray(ap, dtype=float)
-        AP50 = _nan0(ap[:nc, 0], nc) if ap.ndim == 2 and ap.shape[1] >= 1 else None
-    else:
-        AP50 = None
+    ap50 = getattr(seg, "ap50", None)
+    ap = getattr(seg, "ap", None)
+
+    AP50 = _to_arr(ap50, nc)
+    if AP50 is None and ap is not None:
+        ap_arr = np.asarray(ap, dtype=float)
+        # common: ap is (nc, 10) or similar; column 0 corresponds to AP50
+        if ap_arr.ndim == 2 and ap_arr.shape[0] >= nc and ap_arr.shape[1] >= 1:
+            AP50 = _to_arr(ap_arr[:nc, 0], nc)
+        # sometimes ap is already (nc,)
+        elif ap_arr.ndim == 1 and ap_arr.size >= nc:
+            AP50 = _to_arr(ap_arr[:nc], nc)
 
     if P is None or R is None or AP50 is None:
         return None
@@ -158,7 +175,7 @@ def _plot_per_class_bar(trainer):
         return None
 
     classes, P, R, AP50 = arr
-    keep = [i for i, n in enumerate(classes) if str(n).lower() not in ("background", "bg")]
+    keep = [i for i, n in enumerate(classes) if str(n).strip().lower() not in ("background", "bg")]
     if not keep:
         return None
 
@@ -189,23 +206,32 @@ def _plot_per_class_bar(trainer):
     return fig
 
 
-def _get_first_val_batch_plot(trainer):
+# -------------------------
+# val batch plots (GT vs Pred)
+# -------------------------
+
+def _get_first_val_batch_gt_pred(trainer):
     """
-    Returns the validator plot image for the first val batch if available.
-    Key names differ by Ultralytics version.
+    Returns (gt, pred) plots for the first validation batch if available.
+    In Ultralytics 8.3.x these are usually file paths.
     """
     v = getattr(trainer, "validator", None)
     if v is None:
-        return None
-    plots = getattr(v, "plots", None) or {}
+        return None, None
 
-    img = plots.get("val_batch")
-    if img is None:
-        for k in ("val_batch0", "val_batch1", "val_batch_pred", "val_batch_labels"):
-            if k in plots:
-                img = plots[k]
-                break
-    return img
+    plots = getattr(v, "plots", None) or {}
+    if not plots:
+        return None, None
+
+    # Preferred explicit keys
+    gt = plots.get("val_batch0_labels") or plots.get("val_batch_labels")
+    pred = plots.get("val_batch0_pred") or plots.get("val_batch_pred")
+
+    # permissive fallbacks
+    if pred is None:
+        pred = plots.get("val_batch0") or plots.get("val_batch")
+
+    return gt, pred
 
 
 # -------------------------
@@ -217,13 +243,9 @@ def on_pretrain_routine_start(trainer):
     st["config_pushed"] = False
     st["metrics_defined"] = False
 
-    # only do this after wandb.init() happened (Ultralytics does it internally)
-    _ensure_wandb_config(trainer)
-    _define_epoch_metrics_once(trainer)
-
 
 def on_fit_epoch_end(trainer):
-    # If wandb isn't ready yet, skip (we'll start logging once Ultralytics inits it)
+    # If Ultralytics hasn't initialized W&B yet, we can't log.
     if not _wandb_ready():
         return
 
@@ -233,32 +255,42 @@ def on_fit_epoch_end(trainer):
     epoch = int(getattr(trainer, "epoch", 0)) + 1
     log = {"epoch": epoch}
 
-    # per-class seg scalars
-    arr = _get_per_class_seg_arrays(trainer)
-    if arr:
-        classes, P, R, AP50 = arr
-        for i, name in enumerate(classes):
-            if str(name).lower() in ("background", "bg"):
-                continue
-            log[f"metrics/seg/precision/{name}"] = float(P[i])
-            log[f"metrics/seg/recall/{name}"] = float(R[i])
-            log[f"metrics/seg/mAP50/{name}"] = float(AP50[i])
+    # per-class seg scalars (validation-derived)
+    try:
+        arr = _get_per_class_seg_arrays(trainer)
+        if arr:
+            classes, P, R, AP50 = arr
+            for i, name in enumerate(classes):
+                name = str(name).strip()
+                if name.lower() in ("background", "bg", ""):
+                    continue
+                log[f"metrics/seg/precision/{name}"] = float(P[i])
+                log[f"metrics/seg/recall/{name}"] = float(R[i])
+                log[f"metrics/seg/mAP50/{name}"] = float(AP50[i])
+    except Exception as e:
+        logger.warning(f"Per-class seg metric logging failed at epoch {epoch}: {e}")
 
-    # first val batch visualization (every epoch)
-    img = _get_first_val_batch_plot(trainer)
-    if img is not None:
-        log["predictions/val_first_batch"] = wandb.Image(img)
+    # first val batch visualization (every epoch): GT + Pred
+    try:
+        gt, pred = _get_first_val_batch_gt_pred(trainer)
+        if gt is not None:
+            log["predictions/val_first_batch_gt"] = wandb.Image(gt, caption=f"GT epoch {epoch}")
+        if pred is not None:
+            log["predictions/val_first_batch_pred"] = wandb.Image(pred, caption=f"Pred epoch {epoch}")
+    except Exception as e:
+        logger.warning(f"Val batch image logging failed at epoch {epoch}: {e}")
 
-    # final epoch: per-class bar plot
+    # final epoch plot
     if _is_final_epoch(trainer):
-        fig = _plot_per_class_bar(trainer)
-        if fig is not None:
-            log["plots/final_per_class_metrics"] = wandb.Image(fig)
-            plt.close(fig)
+        try:
+            fig = _plot_per_class_bar(trainer)
+            if fig is not None:
+                log["plots/final_per_class_metrics"] = wandb.Image(fig, caption="Final per-class metrics")
+                plt.close(fig)
+        except Exception as e:
+            logger.warning(f"Final per-class plot failed: {e}")
 
-    # Single log call per epoch.
-    # (Optionally you can also force the step to epoch; not required when using define_metric,
-    # but it can help if you want alignment with other logs.)
+    # Single log call per epoch (commit=True default)
     wandb.log(log)
 
 
