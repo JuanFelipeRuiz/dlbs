@@ -1,12 +1,17 @@
 """
-Custom YOLO Training steps with Weights & Biases Integration
+Minimal YOLO (Ultralytics) + W&B callbacks (SEG) with clean epoch-based logging.
 
-Each validation epoch logs additional metrics to W&B:
-- logs per-class seg metrics as scalars: metrics/seg/precision/<class>, metrics/seg/recall/<class>, metrics/seg/mAP50/<class>
-- logs first validation batch visualization (GT vs Pred masks): media/val_first_batch
+Each validation epoch:
+- logs per-class seg metrics as scalars:
+  metrics/seg/precision/<class>
+  metrics/seg/recall/<class>
+  metrics/seg/mAP50/<class>
+- logs first validation batch visualization (GT vs Pred masks):
+  predictions/val_first_batch
 
 Final epoch only:
-- logs per-class bar plot (P/R/mAP50): plots/final_per_class_metrics
+- logs per-class bar plot (P/R/mAP50):
+  plots/final_per_class_metrics
 
 Notes:
 - Assumes W&B is installed and initialized by Ultralytics.
@@ -228,13 +233,13 @@ def on_fit_epoch_end(trainer):
     # first val batch visualization (every epoch)
     img = _get_first_val_batch_plot(trainer)
     if img is not None:
-        log["media/val_first_batch"] = wandb.Image(img)
+        log["predictions/val_first_batch"] = wandb.Image(img)
 
     # final epoch: per-class bar plot
     if _is_final_epoch(trainer):
         fig = _plot_per_class_bar(trainer)
         if fig is not None:
-            log["media/final_per_class_metrics"] = wandb.Image(fig)
+            log["plots/final_per_class_metrics"] = wandb.Image(fig)
             plt.close(fig)
 
     # single log call per epoch
