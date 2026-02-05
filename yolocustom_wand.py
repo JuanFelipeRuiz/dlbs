@@ -14,9 +14,8 @@ Final epoch only:
   plots/final_per_class_metrics
 
 Notes:
-- Assumes W&B is installed and initialized by Ultralytics.
-- Does NOT log best model artifact (Ultralytics already handles best.pt/last.pt artifacts).
-- Uses W&B define_metric so "epoch" is the x-axis for everything we log.
+- Waits for wandb.run to exist (Ultralytics initializes W&B internally).
+- Uses W&B define_metric so "epoch" is the x-axis for our logged keys.
 - Logs exactly once per epoch (single wandb.log call).
 """
 
@@ -41,14 +40,23 @@ def _state(trainer):
     return trainer._custom_wb
 
 
+def _wandb_ready() -> bool:
+    # Ultralytics does wandb.init() internally; callbacks can run before that.
+    return wandb.run is not None
+
+
 def _ensure_wandb_config(trainer):
+    if not _wandb_ready():
+        return
     st = _state(trainer)
     if st["config_pushed"]:
         return
+
     args = getattr(trainer, "args", None)
     if args is None:
         st["config_pushed"] = True
         return
+
     try:
         wandb.config.update(vars(args), allow_val_change=True)
     except Exception as e:
@@ -58,10 +66,8 @@ def _ensure_wandb_config(trainer):
 
 
 def _define_epoch_metrics_once(trainer):
-    """
-    Make 'epoch' the step metric so charts are always aligned by epoch,
-    regardless of Ultralytics internal step usage.
-    """
+    if not _wandb_ready():
+        return
     st = _state(trainer)
     if st["metrics_defined"]:
         return
@@ -72,7 +78,6 @@ def _define_epoch_metrics_once(trainer):
         wandb.define_metric("predictions/*", step_metric="epoch")
         wandb.define_metric("plots/*", step_metric="epoch")
     except Exception as e:
-        # Not fatal; logging still works, you may just get default step behavior.
         logger.warning(f"wandb.define_metric failed: {e}")
     finally:
         st["metrics_defined"] = True
@@ -96,7 +101,7 @@ def _nan0(x, n):
 def _get_per_class_seg_arrays(trainer):
     """
     Returns (classes, P, R, AP50) or None.
-    Reads from trainer.validator.metrics.seg.{p,r,ap50} (fallback seg.ap[:,0]).
+    Tries metrics.seg first, then metrics.mask (version-dependent).
     """
     v = getattr(trainer, "validator", None)
     if v is None:
@@ -107,7 +112,10 @@ def _get_per_class_seg_arrays(trainer):
         return None
 
     m = getattr(v, "metrics", None)
-    seg = getattr(m, "seg", None) if m is not None else None
+    if m is None:
+        return None
+
+    seg = getattr(m, "seg", None) or getattr(m, "mask", None)
     if seg is None:
         return None
 
@@ -116,6 +124,7 @@ def _get_per_class_seg_arrays(trainer):
     ap50 = getattr(seg, "ap50", None)
     ap = getattr(seg, "ap", None)
 
+    # not ready yet
     if p is None and r is None and ap50 is None and ap is None:
         return None
 
@@ -183,7 +192,7 @@ def _plot_per_class_bar(trainer):
 def _get_first_val_batch_plot(trainer):
     """
     Returns the validator plot image for the first val batch if available.
-    Key names can differ by Ultralytics version.
+    Key names differ by Ultralytics version.
     """
     v = getattr(trainer, "validator", None)
     if v is None:
@@ -208,11 +217,16 @@ def on_pretrain_routine_start(trainer):
     st["config_pushed"] = False
     st["metrics_defined"] = False
 
+    # only do this after wandb.init() happened (Ultralytics does it internally)
     _ensure_wandb_config(trainer)
     _define_epoch_metrics_once(trainer)
 
 
 def on_fit_epoch_end(trainer):
+    # If wandb isn't ready yet, skip (we'll start logging once Ultralytics inits it)
+    if not _wandb_ready():
+        return
+
     _ensure_wandb_config(trainer)
     _define_epoch_metrics_once(trainer)
 
@@ -242,7 +256,9 @@ def on_fit_epoch_end(trainer):
             log["plots/final_per_class_metrics"] = wandb.Image(fig)
             plt.close(fig)
 
-    # single log call per epoch
+    # Single log call per epoch.
+    # (Optionally you can also force the step to epoch; not required when using define_metric,
+    # but it can help if you want alignment with other logs.)
     wandb.log(log)
 
 
