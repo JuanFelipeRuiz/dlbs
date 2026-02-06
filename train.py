@@ -113,7 +113,7 @@ def train(cfg_path: str, cli_overrides: dict):
     # Add custom wandb callbacks if wandb is enabled
     if wandb_enabled:
         try:
-            from yolocustom_wand import add_custom_callbacks
+            from dlbs.wandb_api.custom_callback_yolo import add_custom_callbacks
             add_custom_callbacks(model)
             print("Custom wandb callbacks added")
         except ImportError as e:
@@ -136,8 +136,7 @@ def train(cfg_path: str, cli_overrides: dict):
     print(f"✓ Training fertig. Run dir: {save_dir}")
     return results
 
-
-if __name__ == "__main__":
+def argparser():
     p = argparse.ArgumentParser()
     p.add_argument("--cfg", required=True, help="Pfad zu configs/*.yaml")
     p.add_argument("--init-dataset", action="store_true", help="Dataset-Ordnerstruktur erstellen")
@@ -148,7 +147,10 @@ if __name__ == "__main__":
     p.add_argument("--name", type=str)
     p.add_argument("--seed", type=int, help="Random seed for reproducibility (overrides config)")
     p.add_argument("--set", action="append", default=[], help="Beliebige Overrides: key=value (mehrfach)")
+    return p
 
+if __name__ == "__main__":
+    p = argparser()
     args = p.parse_args()
 
     if args.init_dataset:

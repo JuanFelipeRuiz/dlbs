@@ -1,27 +1,29 @@
+# yolocustom_wand.py
 """
-Ultralytics YOLO Segmentation + W&B (clean version)
+Ultralytics YOLO Segmentation + W&B (modular + clean)
 
 Logs:
-- first validation batch GT + predictions (every epoch)
+- first validation batch custom grid (every epoch)
 - per-class segmentation metrics (every epoch)
 
 No debug logs.
 No custom step metrics.
 No validator.plots access.
-Fully Ultralytics-docs compliant.
+Docs-style callback usage (inspect for val batch locals).
 """
 
 import inspect
 import logging
 import numpy as np
+import matplotlib.pyplot as plt
 import wandb
+
+from dlbs.plots.yolo_val_viz import make_custom_val_grid
 
 logger = logging.getLogger(__name__)
 
+MAX_SHOW = 4  # max columns in the grid
 
-# -------------------------
-# helpers
-# -------------------------
 
 def _wandb_ready() -> bool:
     return wandb.run is not None
@@ -83,14 +85,9 @@ def _epoch_from_validator(validator) -> int:
     return int(getattr(trainer, "epoch", 0)) + 1
 
 
-# -------------------------
-# CALLBACKS
-# -------------------------
-
 def on_val_batch_end(validator):
     """
-    Ultralytics docs pattern:
-    Access validation loop locals via inspect and call plotting functions.
+    First validation batch (batch_i==0): log custom 3xN grid to W&B.
     """
     if not _wandb_ready():
         return
@@ -108,18 +105,23 @@ def on_val_batch_end(validator):
         if batch is None or preds is None:
             return
 
-        # Generate GT + prediction plots
-        validator.plot_val_samples(batch, batch_i)
-        validator.plot_predictions(batch, preds, batch_i)
+        fig = make_custom_val_grid(batch, preds, max_show=MAX_SHOW)
+        if fig is None:
+            return
+
+        wandb.log(
+            {"predictions/val_first_batch_custom_grid": wandb.Image(fig)},
+            step=wandb.run.step,
+        )
+        plt.close(fig)
 
     except Exception as e:
-        logger.warning(f"val batch plotting failed: {e}")
+        logger.warning(f"custom val grid failed: {e}")
 
 
 def on_val_end(validator):
     """
-    After validation → metrics are ready here.
-    Log per-class segmentation metrics.
+    After validation: log per-class segmentation metrics.
     """
     if not _wandb_ready():
         return
@@ -138,7 +140,6 @@ def on_val_end(validator):
             log[f"metrics/seg/recall/{name}"] = float(R[i])
             log[f"metrics/seg/mAP50/{name}"] = float(AP50[i])
 
-    # log at current global step → avoids out-of-order warnings from OUR code
     wandb.log(log, step=wandb.run.step)
 
 
