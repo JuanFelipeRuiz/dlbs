@@ -1,26 +1,21 @@
 # yolo_val_viz.py
 import numpy as np
 import matplotlib.pyplot as plt
+from PIL import Image, ImageDraw
 
-
-# Set True to print shapes once per image (safe + minimal).
-# You can also set this via env var in your own code if you want.
 DEBUG_PRINT_SHAPES = True
 
 
 def _to_uint8_img(x: np.ndarray) -> np.ndarray:
-    """Accepts HWC float [0..1] or [0..255] or uint8; returns uint8 HWC."""
     if x.dtype == np.uint8:
         return x
     x = np.asarray(x)
     if x.max() <= 1.5:
         x = x * 255.0
-    x = np.clip(x, 0, 255).astype(np.uint8)
-    return x
+    return np.clip(x, 0, 255).astype(np.uint8)
 
 
 def chw_tensor_to_hwc_uint8(t) -> np.ndarray:
-    """Torch tensor CHW (or BCHW where B=1) -> HWC uint8. (No torch import needed.)"""
     a = t.detach().float().cpu().numpy()
     if a.ndim == 4:
         a = a[0]
@@ -29,10 +24,9 @@ def chw_tensor_to_hwc_uint8(t) -> np.ndarray:
 
 
 def class_palette(num_classes: int):
-    """Deterministic palette per class id (no extra deps)."""
     cols = []
     for i in range(max(num_classes, 1)):
-        h = (i * 0.61803398875) % 1.0  # golden ratio spacing
+        h = (i * 0.61803398875) % 1.0
         r = int(255 * (0.5 + 0.5 * np.cos(2 * np.pi * (h + 0.00))))
         g = int(255 * (0.5 + 0.5 * np.cos(2 * np.pi * (h + 0.33))))
         b = int(255 * (0.5 + 0.5 * np.cos(2 * np.pi * (h + 0.66))))
@@ -42,30 +36,31 @@ def class_palette(num_classes: int):
 
 def pred_instances(pred_item):
     """
-    Extract predicted instances from an Ultralytics Results-like object.
-
     Returns:
-      masks_bool: (N,H,W) bool or None
-      cls_ids:    (N,) int or None
-      confs:      (N,) float or None
+      masks_bool (N,h,w) or None
+      cls_ids    (N,) or None
+      confs      (N,) or None
     """
+    masks_bool = None
+    cls_ids = None
+    confs = None
+
     masks = getattr(pred_item, "masks", None)
     boxes = getattr(pred_item, "boxes", None)
 
-    masks_bool = None
-    if masks is not None and getattr(masks, "data", None) is not None:
-        m = masks.data.detach().float().cpu().numpy()  # (N,h,w) (often lower-res)
-        masks_bool = m > 0.5
+    if masks is not None:
+        data = getattr(masks, "data", None)
+        if data is not None:
+            m = data.detach().float().cpu().numpy()
+            if m.ndim == 3 and m.shape[0] > 0:
+                masks_bool = m > 0.5
 
-    cls_ids = None
-    confs = None
     if boxes is not None:
         if getattr(boxes, "cls", None) is not None:
             cls_ids = boxes.cls.detach().cpu().numpy().astype(int).reshape(-1)
         if getattr(boxes, "conf", None) is not None:
             confs = boxes.conf.detach().cpu().numpy().astype(float).reshape(-1)
 
-    # Align lengths if possible
     if masks_bool is not None and cls_ids is not None:
         n = min(masks_bool.shape[0], cls_ids.shape[0])
         masks_bool = masks_bool[:n]
@@ -76,61 +71,7 @@ def pred_instances(pred_item):
     return masks_bool, cls_ids, confs
 
 
-def gt_instances_from_batch(batch: dict, img_index: int, hw: tuple[int, int]):
-    """
-    Best-effort GT instance extraction across Ultralytics versions.
-
-    Typical ultralytics:
-      batch["masks"]     : (N,H,W)
-      batch["batch_idx"] : (N,)
-      batch["cls"]       : (N,1) or (N,)
-
-    Returns:
-      masks_bool: (N,H,W) bool or None
-      cls_ids:    (N,) int or None
-    """
-    H, W = hw
-    masks_all = batch.get("masks", None)
-    bidx = batch.get("batch_idx", None)
-    cls_all = batch.get("cls", None)
-
-    if masks_all is None or bidx is None:
-        return None, None
-
-    try:
-        ma = masks_all.detach().float().cpu().numpy()  # (N,H,W) or (B,H,W)
-        b = bidx.detach().cpu().numpy().astype(int).reshape(-1)
-
-        # Case A: semantic-ish (B,H,W) where B==batch size (rare)
-        if ma.ndim == 3 and "img" in batch and ma.shape[0] == int(batch["img"].shape[0]) and ma.shape[-2:] == (H, W):
-            m = ma[img_index] > 0.5
-            return (m[None, ...], None) if m.shape == (H, W) else (None, None)
-
-        # Case B: instance masks (N,H,W) mapped by batch_idx (most common)
-        if ma.ndim != 3:
-            return None, None
-        if ma.shape[0] != b.shape[0]:
-            return None, None
-
-        sel = (b == img_index)
-        masks = ma[sel] > 0.5
-        if masks.size == 0:
-            return None, None
-
-        cls_ids = None
-        if cls_all is not None:
-            c = cls_all.detach().cpu().numpy().reshape(-1)
-            if c.shape[0] == b.shape[0]:
-                cls_ids = c[sel].astype(int)
-
-        return masks, cls_ids
-
-    except Exception:
-        return None, None
-
-
 def _resize_mask_nn(mask: np.ndarray, out_hw: tuple[int, int]) -> np.ndarray:
-    """Nearest-neighbor resize for a single 2D mask without extra deps."""
     out_h, out_w = out_hw
     in_h, in_w = mask.shape[-2:]
     if (in_h, in_w) == (out_h, out_w):
@@ -141,7 +82,6 @@ def _resize_mask_nn(mask: np.ndarray, out_hw: tuple[int, int]) -> np.ndarray:
 
 
 def _resize_masks_nn(masks: np.ndarray, out_hw: tuple[int, int]) -> np.ndarray:
-    """Resize (N,H,W) masks to (N,out_h,out_w) with nearest neighbor."""
     if masks is None:
         return None
     masks = np.asarray(masks)
@@ -154,10 +94,6 @@ def _resize_masks_nn(masks: np.ndarray, out_hw: tuple[int, int]) -> np.ndarray:
 
 
 def overlay_instances_by_class(base_uint8: np.ndarray, masks_bool, cls_ids, class_colors, alpha: float) -> np.ndarray:
-    """
-    Overlay instance masks onto base image, colored by class id.
-    Resizes masks to match base image shape if needed.
-    """
     out = base_uint8.astype(np.float32).copy()
     h, w = out.shape[:2]
 
@@ -170,7 +106,6 @@ def overlay_instances_by_class(base_uint8: np.ndarray, masks_bool, cls_ids, clas
     if masks_bool.ndim == 2:
         masks_bool = masks_bool[None, ...]
 
-    # Resize instead of skipping when shapes differ (common in YOLO seg: low-res masks)
     if masks_bool.shape[-2:] != (h, w):
         masks_bool = _resize_masks_nn(masks_bool.astype(np.uint8), (h, w)).astype(bool)
 
@@ -195,19 +130,112 @@ def overlay_instances_by_class(base_uint8: np.ndarray, masks_bool, cls_ids, clas
     return np.clip(out, 0, 255).astype(np.uint8)
 
 
+def _segments_to_masks(segments, hw: tuple[int, int]) -> np.ndarray | None:
+    """
+    segments: list of polygons (each polygon Nx2), in pixel coords OR normalized [0..1].
+    Returns (N,H,W) uint8 masks or None
+    """
+    H, W = hw
+    if segments is None:
+        return None
+
+    masks = []
+    for poly in segments:
+        if poly is None:
+            continue
+        poly = np.asarray(poly, dtype=float)
+        if poly.ndim != 2 or poly.shape[1] != 2 or poly.shape[0] < 3:
+            continue
+
+        # if normalized coordinates, scale up
+        if poly.max() <= 1.5:
+            poly[:, 0] *= W
+            poly[:, 1] *= H
+
+        im = Image.new("L", (W, H), 0)
+        dr = ImageDraw.Draw(im)
+        dr.polygon([tuple(p) for p in poly], outline=1, fill=1)
+        masks.append(np.array(im, dtype=np.uint8))
+
+    if not masks:
+        return None
+    return np.stack(masks, axis=0)
+
+
+def gt_instances_from_batch(batch: dict, img_index: int, hw: tuple[int, int]):
+    """
+    Tries:
+      A) batch["masks"] + batch["batch_idx"] (+ batch["cls"])
+      B) batch["segments"] + batch["batch_idx"] (+ batch["cls"])  -> rasterize polygons
+    """
+    H, W = hw
+
+    bidx = batch.get("batch_idx", None)
+    cls_all = batch.get("cls", None)
+
+    # Need batch_idx to select instances per image
+    if bidx is None:
+        return None, None
+    b = bidx.detach().cpu().numpy().astype(int).reshape(-1)
+
+    # cls ids per instance if present
+    cls_ids_all = None
+    if cls_all is not None:
+        try:
+            c = cls_all.detach().cpu().numpy().reshape(-1)
+            if c.shape[0] == b.shape[0]:
+                cls_ids_all = c.astype(int)
+        except Exception:
+            cls_ids_all = None
+
+    sel = (b == img_index)
+
+    # A) masks already available
+    masks_all = batch.get("masks", None)
+    if masks_all is not None:
+        try:
+            ma = masks_all.detach().float().cpu().numpy()
+            if ma.ndim == 3 and ma.shape[0] == b.shape[0]:
+                m = (ma[sel] > 0.5)
+                if m.size == 0:
+                    return None, None
+                cls_sel = cls_ids_all[sel] if cls_ids_all is not None else None
+                return m, cls_sel
+        except Exception:
+            pass
+
+    # B) segments polygons fallback
+    segments_all = batch.get("segments", None)
+    if segments_all is None:
+        return None, None
+
+    try:
+        # segments_all is usually a list with length N_instances
+        if isinstance(segments_all, (list, tuple)) and len(segments_all) == b.shape[0]:
+            seg_sel = [segments_all[i] for i in np.where(sel)[0].tolist()]
+            m = _segments_to_masks(seg_sel, (H, W))
+            if m is None or m.size == 0:
+                return None, None
+            cls_sel = cls_ids_all[sel] if cls_ids_all is not None else None
+            return m.astype(bool), cls_sel
+    except Exception:
+        return None, None
+
+    return None, None
+
+
 def make_custom_val_grid(batch: dict, preds, names: dict, max_show: int = 4, show_text: bool = True):
-    """
-    Build a 3xN grid (N <= max_show).
-
-    Row 1: predicted instance masks on black background (colored by class)
-    Row 2: original image
-    Row 3: original with GT + Pred overlay (both colored by class)
-
-    No boxes, only instance masks (no background regions).
-    """
     imgs = batch.get("img", None)
     if imgs is None or not isinstance(preds, (list, tuple)):
         return None
+
+    if DEBUG_PRINT_SHAPES:
+        try:
+            print(f"[yolo_val_viz] batch keys: {sorted(list(batch.keys()))}")
+            if len(preds) > 0:
+                print(f"[yolo_val_viz] preds[0] type: {type(preds[0]).__name__}, has masks={hasattr(preds[0], 'masks')}, has boxes={hasattr(preds[0], 'boxes')}")
+        except Exception:
+            pass
 
     B = int(imgs.shape[0])
     n = min(B, max_show)
@@ -216,7 +244,7 @@ def make_custom_val_grid(batch: dict, preds, names: dict, max_show: int = 4, sho
     if n == 1:
         axes = np.array(axes).reshape(3, 1)
 
-    # determine #classes from names dict if possible
+    # determine #classes
     try:
         nc = int(max(names.keys())) + 1 if isinstance(names, dict) and len(names) else 1
     except Exception:
@@ -232,30 +260,24 @@ def make_custom_val_grid(batch: dict, preds, names: dict, max_show: int = 4, sho
         gt_masks, gt_cls = gt_instances_from_batch(batch, i, (H, W))
 
         if DEBUG_PRINT_SHAPES:
-            pm_shape = None if pred_masks is None else tuple(pred_masks.shape)
-            gm_shape = None if gt_masks is None else tuple(gt_masks.shape)
-            print(
-                f"[yolo_val_viz] img[{i}] HxW={H}x{W} | "
-                f"pred_masks={pm_shape} pred_cls={'None' if pred_cls is None else pred_cls.shape} | "
-                f"gt_masks={gm_shape} gt_cls={'None' if gt_cls is None else gt_cls.shape}"
-            )
+            pm = 0 if pred_masks is None else int(pred_masks.shape[0])
+            gm = 0 if gt_masks is None else int(gt_masks.shape[0])
+            print(f"[yolo_val_viz] img[{i}] HxW={H}x{W} | pred_inst={pm} gt_inst={gm} | pred_masks_shape={None if pred_masks is None else pred_masks.shape}")
 
         black = np.zeros_like(img_uint8)
 
         row1 = overlay_instances_by_class(black, pred_masks, pred_cls, class_colors, alpha=0.85)
         row2 = img_uint8
         row3 = img_uint8.copy()
-        row3 = overlay_instances_by_class(row3, gt_masks, gt_cls, class_colors, alpha=0.35)      # GT first
-        row3 = overlay_instances_by_class(row3, pred_masks, pred_cls, class_colors, alpha=0.35)  # Pred on top
+        row3 = overlay_instances_by_class(row3, gt_masks, gt_cls, class_colors, alpha=0.35)
+        row3 = overlay_instances_by_class(row3, pred_masks, pred_cls, class_colors, alpha=0.35)
 
         axes[0, i].imshow(row1)
         axes[1, i].imshow(row2)
         axes[2, i].imshow(row3)
-
         for r in range(3):
             axes[r, i].axis("off")
 
-        # Optional: show top-k predicted labels (class name + conf)
         if show_text and pred_cls is not None and pred_conf is not None and len(pred_cls) > 0:
             k = min(5, len(pred_cls))
             lines = []
