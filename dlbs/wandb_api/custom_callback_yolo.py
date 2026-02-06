@@ -18,7 +18,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import wandb
 
-from dlbs.plots.yolo_val_viz import make_custom_val_grid
+from dlbs.plots.yolo_val_viz import make_val_grid_pred_gt_orig, make_per_class_grids
 
 logger = logging.getLogger(__name__)
 
@@ -116,7 +116,7 @@ def on_val_batch_end(validator):
         elif not isinstance(names, dict):
             names = {}
 
-        fig = make_custom_val_grid(batch, preds, names=names, max_show=MAX_SHOW)
+        fig = make_val_grid_pred_gt_orig(batch, preds, names=names, max_show=MAX_SHOW)
         if fig is None:
             print("No figure found")
             return
@@ -126,6 +126,21 @@ def on_val_batch_end(validator):
             step=wandb.run.step,
         )
         plt.close(fig)
+        m = batch["masks"]
+        print("masks shape:", tuple(m.shape), "dtype:", m.dtype)
+        print("masks unique (sample):", np.unique(m.detach().cpu().numpy())[:20])
+        print("cls shape:", None if batch.get("cls") is None else tuple(batch["cls"].shape))
+        print("batch_idx shape:", None if batch.get("batch_idx") is None else tuple(batch["batch_idx"].shape))
+
+
+        grids = make_per_class_grids(batch, preds, names=names, max_show=MAX_SHOW)
+
+        for j, (cls_name, cls_fig) in enumerate(grids.items()):
+
+            key = f"predictions/val_first_batch_class/{cls_name}"
+            wandb.log({key: wandb.Image(cls_fig)}, step=wandb.run.step)
+            plt.close(cls_fig)
+
 
     except Exception as e:
         logger.warning(f"custom val grid failed: {e}")
