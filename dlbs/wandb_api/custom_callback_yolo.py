@@ -18,7 +18,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import wandb
 
-from dlbs.plots.yolo_val_viz import make_custom_val_grid, make_per_class_grids
+from dlbs.plots.yolo_val_viz import make_val_grid_pred_gt_orig, make_per_class_grids
 
 logger = logging.getLogger(__name__)
 
@@ -116,7 +116,7 @@ def on_val_batch_end(validator):
         elif not isinstance(names, dict):
             names = {}
 
-        fig = make_custom_val_grid(batch, preds, names=names, max_show=MAX_SHOW)
+        fig = make_val_grid_pred_gt_orig(batch, preds, names=names, max_show=MAX_SHOW)
         if fig is None:
             print("No figure found")
             return
