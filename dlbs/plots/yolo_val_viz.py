@@ -3,6 +3,11 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 
+# Set True to print shapes once per image (safe + minimal).
+# You can also set this via env var in your own code if you want.
+DEBUG_PRINT_SHAPES = True
+
+
 def _to_uint8_img(x: np.ndarray) -> np.ndarray:
     """Accepts HWC float [0..1] or [0..255] or uint8; returns uint8 HWC."""
     if x.dtype == np.uint8:
@@ -49,7 +54,7 @@ def pred_instances(pred_item):
 
     masks_bool = None
     if masks is not None and getattr(masks, "data", None) is not None:
-        m = masks.data.detach().float().cpu().numpy()  # (N,H,W)
+        m = masks.data.detach().float().cpu().numpy()  # (N,h,w) (often lower-res)
         masks_bool = m > 0.5
 
     cls_ids = None
@@ -96,13 +101,15 @@ def gt_instances_from_batch(batch: dict, img_index: int, hw: tuple[int, int]):
         ma = masks_all.detach().float().cpu().numpy()  # (N,H,W) or (B,H,W)
         b = bidx.detach().cpu().numpy().astype(int).reshape(-1)
 
-        # Case A: semantic-ish (B,H,W) where B==batch size (rare for instance seg training)
+        # Case A: semantic-ish (B,H,W) where B==batch size (rare)
         if ma.ndim == 3 and "img" in batch and ma.shape[0] == int(batch["img"].shape[0]) and ma.shape[-2:] == (H, W):
             m = ma[img_index] > 0.5
             return (m[None, ...], None) if m.shape == (H, W) else (None, None)
 
         # Case B: instance masks (N,H,W) mapped by batch_idx (most common)
-        if ma.ndim != 3 or ma.shape[-2:] != (H, W) or ma.shape[0] != b.shape[0]:
+        if ma.ndim != 3:
+            return None, None
+        if ma.shape[0] != b.shape[0]:
             return None, None
 
         sel = (b == img_index)
@@ -122,14 +129,34 @@ def gt_instances_from_batch(batch: dict, img_index: int, hw: tuple[int, int]):
         return None, None
 
 
+def _resize_mask_nn(mask: np.ndarray, out_hw: tuple[int, int]) -> np.ndarray:
+    """Nearest-neighbor resize for a single 2D mask without extra deps."""
+    out_h, out_w = out_hw
+    in_h, in_w = mask.shape[-2:]
+    if (in_h, in_w) == (out_h, out_w):
+        return mask
+    y = (np.linspace(0, in_h - 1, out_h)).astype(np.int64)
+    x = (np.linspace(0, in_w - 1, out_w)).astype(np.int64)
+    return mask[y][:, x]
+
+
+def _resize_masks_nn(masks: np.ndarray, out_hw: tuple[int, int]) -> np.ndarray:
+    """Resize (N,H,W) masks to (N,out_h,out_w) with nearest neighbor."""
+    if masks is None:
+        return None
+    masks = np.asarray(masks)
+    if masks.ndim == 2:
+        masks = masks[None, ...]
+    out = np.zeros((masks.shape[0], out_hw[0], out_hw[1]), dtype=masks.dtype)
+    for i in range(masks.shape[0]):
+        out[i] = _resize_mask_nn(masks[i], out_hw)
+    return out
+
+
 def overlay_instances_by_class(base_uint8: np.ndarray, masks_bool, cls_ids, class_colors, alpha: float) -> np.ndarray:
     """
     Overlay instance masks onto base image, colored by class id.
-
-    base_uint8: HWC uint8
-    masks_bool: (N,H,W) bool/0-1
-    cls_ids:    (N,) int (or None -> treated as zeros)
-    class_colors: list[(r,g,b)]
+    Resizes masks to match base image shape if needed.
     """
     out = base_uint8.astype(np.float32).copy()
     h, w = out.shape[:2]
@@ -143,8 +170,9 @@ def overlay_instances_by_class(base_uint8: np.ndarray, masks_bool, cls_ids, clas
     if masks_bool.ndim == 2:
         masks_bool = masks_bool[None, ...]
 
+    # Resize instead of skipping when shapes differ (common in YOLO seg: low-res masks)
     if masks_bool.shape[-2:] != (h, w):
-        return base_uint8
+        masks_bool = _resize_masks_nn(masks_bool.astype(np.uint8), (h, w)).astype(bool)
 
     if cls_ids is None:
         cls_ids = np.zeros((masks_bool.shape[0],), dtype=int)
@@ -202,6 +230,15 @@ def make_custom_val_grid(batch: dict, preds, names: dict, max_show: int = 4, sho
 
         pred_masks, pred_cls, pred_conf = pred_instances(preds[i]) if i < len(preds) else (None, None, None)
         gt_masks, gt_cls = gt_instances_from_batch(batch, i, (H, W))
+
+        if DEBUG_PRINT_SHAPES:
+            pm_shape = None if pred_masks is None else tuple(pred_masks.shape)
+            gm_shape = None if gt_masks is None else tuple(gt_masks.shape)
+            print(
+                f"[yolo_val_viz] img[{i}] HxW={H}x{W} | "
+                f"pred_masks={pm_shape} pred_cls={'None' if pred_cls is None else pred_cls.shape} | "
+                f"gt_masks={gm_shape} gt_cls={'None' if gt_cls is None else gt_cls.shape}"
+            )
 
         black = np.zeros_like(img_uint8)
 
