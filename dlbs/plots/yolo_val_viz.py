@@ -1,7 +1,6 @@
 # yolo_val_viz.py
 import numpy as np
 import matplotlib.pyplot as plt
-from PIL import Image, ImageDraw
 
 DEBUG_PRINT_SHAPES = True
 
@@ -32,43 +31,6 @@ def class_palette(num_classes: int):
         b = int(255 * (0.5 + 0.5 * np.cos(2 * np.pi * (h + 0.66))))
         cols.append((r, g, b))
     return cols
-
-
-def pred_instances(pred_item):
-    """
-    Returns:
-      masks_bool (N,h,w) or None
-      cls_ids    (N,) or None
-      confs      (N,) or None
-    """
-    masks_bool = None
-    cls_ids = None
-    confs = None
-
-    masks = getattr(pred_item, "masks", None)
-    boxes = getattr(pred_item, "boxes", None)
-
-    if masks is not None:
-        data = getattr(masks, "data", None)
-        if data is not None:
-            m = data.detach().float().cpu().numpy()
-            if m.ndim == 3 and m.shape[0] > 0:
-                masks_bool = m > 0.5
-
-    if boxes is not None:
-        if getattr(boxes, "cls", None) is not None:
-            cls_ids = boxes.cls.detach().cpu().numpy().astype(int).reshape(-1)
-        if getattr(boxes, "conf", None) is not None:
-            confs = boxes.conf.detach().cpu().numpy().astype(float).reshape(-1)
-
-    if masks_bool is not None and cls_ids is not None:
-        n = min(masks_bool.shape[0], cls_ids.shape[0])
-        masks_bool = masks_bool[:n]
-        cls_ids = cls_ids[:n]
-        if confs is not None:
-            confs = confs[:n]
-
-    return masks_bool, cls_ids, confs
 
 
 def _resize_mask_nn(mask: np.ndarray, out_hw: tuple[int, int]) -> np.ndarray:
@@ -130,99 +92,183 @@ def overlay_instances_by_class(base_uint8: np.ndarray, masks_bool, cls_ids, clas
     return np.clip(out, 0, 255).astype(np.uint8)
 
 
-def _segments_to_masks(segments, hw: tuple[int, int]) -> np.ndarray | None:
+# -------------------------
+# PRED extraction (dict or Results)
+# -------------------------
+
+def pred_instances(pred_item):
     """
-    segments: list of polygons (each polygon Nx2), in pixel coords OR normalized [0..1].
-    Returns (N,H,W) uint8 masks or None
+    Supports:
+      - Ultralytics Results-like object with .masks.data + .boxes.cls/.conf
+      - dict-based output (your case): try common keys
+
+    Returns:
+      masks_bool: (N,h,w) bool or None
+      cls_ids:    (N,) int or None
+      confs:      (N,) float or None
     """
-    H, W = hw
-    if segments is None:
-        return None
+    # Case 1: dict outputs
+    if isinstance(pred_item, dict):
+        # try common key candidates
+        masks = None
+        for k in ("masks", "mask", "segments", "mask_probs"):
+            if k in pred_item:
+                masks = pred_item[k]
+                break
 
-    masks = []
-    for poly in segments:
-        if poly is None:
-            continue
-        poly = np.asarray(poly, dtype=float)
-        if poly.ndim != 2 or poly.shape[1] != 2 or poly.shape[0] < 3:
-            continue
+        cls_ids = None
+        for k in ("cls", "classes", "class_ids"):
+            if k in pred_item:
+                cls_ids = pred_item[k]
+                break
 
-        # if normalized coordinates, scale up
-        if poly.max() <= 1.5:
-            poly[:, 0] *= W
-            poly[:, 1] *= H
+        confs = None
+        for k in ("conf", "confs", "scores"):
+            if k in pred_item:
+                confs = pred_item[k]
+                break
 
-        im = Image.new("L", (W, H), 0)
-        dr = ImageDraw.Draw(im)
-        dr.polygon([tuple(p) for p in poly], outline=1, fill=1)
-        masks.append(np.array(im, dtype=np.uint8))
+        masks_bool = None
+        if masks is not None:
+            try:
+                if hasattr(masks, "detach"):
+                    masks = masks.detach().float().cpu().numpy()
+                else:
+                    masks = np.asarray(masks)
+                # expected (N,h,w)
+                if masks.ndim == 3 and masks.shape[0] > 0:
+                    masks_bool = masks > 0.5
+            except Exception:
+                masks_bool = None
 
-    if not masks:
-        return None
-    return np.stack(masks, axis=0)
+        if cls_ids is not None:
+            try:
+                if hasattr(cls_ids, "detach"):
+                    cls_ids = cls_ids.detach().cpu().numpy()
+                cls_ids = np.asarray(cls_ids).astype(int).reshape(-1)
+            except Exception:
+                cls_ids = None
 
+        if confs is not None:
+            try:
+                if hasattr(confs, "detach"):
+                    confs = confs.detach().cpu().numpy()
+                confs = np.asarray(confs).astype(float).reshape(-1)
+            except Exception:
+                confs = None
+
+        # align
+        if masks_bool is not None and cls_ids is not None:
+            n = min(masks_bool.shape[0], cls_ids.shape[0])
+            masks_bool = masks_bool[:n]
+            cls_ids = cls_ids[:n]
+            if confs is not None:
+                confs = confs[:n]
+
+        return masks_bool, cls_ids, confs
+
+    # Case 2: Results-like objects
+    masks = getattr(pred_item, "masks", None)
+    boxes = getattr(pred_item, "boxes", None)
+
+    masks_bool = None
+    if masks is not None and getattr(masks, "data", None) is not None:
+        m = masks.data.detach().float().cpu().numpy()
+        if m.ndim == 3 and m.shape[0] > 0:
+            masks_bool = m > 0.5
+
+    cls_ids = None
+    confs = None
+    if boxes is not None:
+        if getattr(boxes, "cls", None) is not None:
+            cls_ids = boxes.cls.detach().cpu().numpy().astype(int).reshape(-1)
+        if getattr(boxes, "conf", None) is not None:
+            confs = boxes.conf.detach().cpu().numpy().astype(float).reshape(-1)
+
+    if masks_bool is not None and cls_ids is not None:
+        n = min(masks_bool.shape[0], cls_ids.shape[0])
+        masks_bool = masks_bool[:n]
+        cls_ids = cls_ids[:n]
+        if confs is not None:
+            confs = confs[:n]
+
+    return masks_bool, cls_ids, confs
+
+
+# -------------------------
+# GT extraction (batch masks)
+# -------------------------
 
 def gt_instances_from_batch(batch: dict, img_index: int, hw: tuple[int, int]):
     """
-    Tries:
-      A) batch["masks"] + batch["batch_idx"] (+ batch["cls"])
-      B) batch["segments"] + batch["batch_idx"] (+ batch["cls"])  -> rasterize polygons
+    Supports:
+      - batch["masks"] (B,H,W) -> treat as single mask instance for that image
+      - batch["masks"] (N,H,W) + batch["batch_idx"] -> instance masks
+
+    Returns:
+      masks_bool: (N,H,W) bool or None
+      cls_ids:    (N,) int or None
     """
     H, W = hw
-
-    bidx = batch.get("batch_idx", None)
-    cls_all = batch.get("cls", None)
-
-    # Need batch_idx to select instances per image
-    if bidx is None:
-        return None, None
-    b = bidx.detach().cpu().numpy().astype(int).reshape(-1)
-
-    # cls ids per instance if present
-    cls_ids_all = None
-    if cls_all is not None:
-        try:
-            c = cls_all.detach().cpu().numpy().reshape(-1)
-            if c.shape[0] == b.shape[0]:
-                cls_ids_all = c.astype(int)
-        except Exception:
-            cls_ids_all = None
-
-    sel = (b == img_index)
-
-    # A) masks already available
     masks_all = batch.get("masks", None)
-    if masks_all is not None:
-        try:
-            ma = masks_all.detach().float().cpu().numpy()
-            if ma.ndim == 3 and ma.shape[0] == b.shape[0]:
-                m = (ma[sel] > 0.5)
-                if m.size == 0:
-                    return None, None
-                cls_sel = cls_ids_all[sel] if cls_ids_all is not None else None
-                return m, cls_sel
-        except Exception:
-            pass
+    cls_all = batch.get("cls", None)
+    bidx = batch.get("batch_idx", None)
 
-    # B) segments polygons fallback
-    segments_all = batch.get("segments", None)
-    if segments_all is None:
+    if masks_all is None:
         return None, None
 
     try:
-        # segments_all is usually a list with length N_instances
-        if isinstance(segments_all, (list, tuple)) and len(segments_all) == b.shape[0]:
-            seg_sel = [segments_all[i] for i in np.where(sel)[0].tolist()]
-            m = _segments_to_masks(seg_sel, (H, W))
-            if m is None or m.size == 0:
-                return None, None
-            cls_sel = cls_ids_all[sel] if cls_ids_all is not None else None
-            return m.astype(bool), cls_sel
+        ma = masks_all.detach().float().cpu().numpy()
     except Exception:
         return None, None
 
+    # If GT masks are per-image: (B,H,W)
+    if ma.ndim == 3 and "img" in batch and ma.shape[0] == int(batch["img"].shape[0]):
+        m = ma[img_index]
+        # resize if needed
+        if m.shape != (H, W):
+            m = _resize_mask_nn(m, (H, W))
+        m = (m > 0.5)
+        # no per-instance cls here
+        return m[None, ...], None
+
+    # If GT masks are per-instance: (N,H,W) with batch_idx mapping
+    if ma.ndim == 3 and bidx is not None:
+        try:
+            b = bidx.detach().cpu().numpy().astype(int).reshape(-1)
+        except Exception:
+            return None, None
+
+        if ma.shape[0] != b.shape[0]:
+            return None, None
+
+        sel = (b == img_index)
+        masks = ma[sel]
+        if masks.size == 0:
+            return None, None
+
+        if masks.shape[-2:] != (H, W):
+            masks = _resize_masks_nn(masks, (H, W))
+
+        masks_bool = masks > 0.5
+
+        cls_ids = None
+        if cls_all is not None:
+            try:
+                c = cls_all.detach().cpu().numpy().reshape(-1)
+                if c.shape[0] == b.shape[0]:
+                    cls_ids = c[sel].astype(int)
+            except Exception:
+                cls_ids = None
+
+        return masks_bool, cls_ids
+
     return None, None
 
+
+# -------------------------
+# GRID
+# -------------------------
 
 def make_custom_val_grid(batch: dict, preds, names: dict, max_show: int = 4, show_text: bool = True):
     imgs = batch.get("img", None)
@@ -233,7 +279,7 @@ def make_custom_val_grid(batch: dict, preds, names: dict, max_show: int = 4, sho
         try:
             print(f"[yolo_val_viz] batch keys: {sorted(list(batch.keys()))}")
             if len(preds) > 0:
-                print(f"[yolo_val_viz] preds[0] type: {type(preds[0]).__name__}, has masks={hasattr(preds[0], 'masks')}, has boxes={hasattr(preds[0], 'boxes')}")
+                print(f"[yolo_val_viz] preds[0] type: {type(preds[0]).__name__}")
         except Exception:
             pass
 
@@ -249,7 +295,6 @@ def make_custom_val_grid(batch: dict, preds, names: dict, max_show: int = 4, sho
         nc = int(max(names.keys())) + 1 if isinstance(names, dict) and len(names) else 1
     except Exception:
         nc = 1
-
     class_colors = class_palette(num_classes=nc)
 
     for i in range(n):
@@ -262,7 +307,12 @@ def make_custom_val_grid(batch: dict, preds, names: dict, max_show: int = 4, sho
         if DEBUG_PRINT_SHAPES:
             pm = 0 if pred_masks is None else int(pred_masks.shape[0])
             gm = 0 if gt_masks is None else int(gt_masks.shape[0])
-            print(f"[yolo_val_viz] img[{i}] HxW={H}x{W} | pred_inst={pm} gt_inst={gm} | pred_masks_shape={None if pred_masks is None else pred_masks.shape}")
+            print(
+                f"[yolo_val_viz] img[{i}] HxW={H}x{W} | "
+                f"pred_inst={pm} gt_inst={gm} | "
+                f"pred_masks_shape={None if pred_masks is None else pred_masks.shape} | "
+                f"gt_masks_shape={None if gt_masks is None else gt_masks.shape}"
+            )
 
         black = np.zeros_like(img_uint8)
 
