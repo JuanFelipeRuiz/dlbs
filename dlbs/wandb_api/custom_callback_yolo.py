@@ -95,6 +95,7 @@ def on_val_batch_end(validator):
     try:
         fr = inspect.currentframe()
         if fr is None or fr.f_back is None or fr.f_back.f_back is None:
+            print("No frame found")
             return
 
         v = fr.f_back.f_back.f_locals
@@ -106,9 +107,9 @@ def on_val_batch_end(validator):
         batch = v.get("batch", None)
         preds = v.get("preds", None)
         if batch is None or preds is None:
+            print("No batch or preds found")
             return
 
-        # names can be dict or list depending on version; normalize to dict
         names = getattr(validator, "names", None)
         if isinstance(names, list):
             names = {i: n for i, n in enumerate(names)}
@@ -117,6 +118,7 @@ def on_val_batch_end(validator):
 
         fig = make_custom_val_grid(batch, preds, names=names, max_show=MAX_SHOW)
         if fig is None:
+            print("No figure found")
             return
 
         wandb.log(
