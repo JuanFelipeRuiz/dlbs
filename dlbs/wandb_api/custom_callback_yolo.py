@@ -18,7 +18,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import wandb
 
-from dlbs.plots.yolo_val_viz import make_custom_val_grid
+from dlbs.plots.yolo_val_viz import make_custom_val_grid, make_per_class_grids
 
 logger = logging.getLogger(__name__)
 
@@ -126,6 +126,15 @@ def on_val_batch_end(validator):
             step=wandb.run.step,
         )
         plt.close(fig)
+
+        grids = make_per_class_grids(batch, preds, names=names, max_show=MAX_SHOW)
+
+        for j, (cls_name, cls_fig) in enumerate(grids.items()):
+
+            key = f"predictions/val_first_batch_class/{cls_name}"
+            wandb.log({key: wandb.Image(cls_fig)}, step=wandb.run.step)
+            plt.close(cls_fig)
+
 
     except Exception as e:
         logger.warning(f"custom val grid failed: {e}")
