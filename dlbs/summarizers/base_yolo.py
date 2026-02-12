@@ -11,6 +11,7 @@ resolution so that concrete summarizers only need to implement:
 
 import logging
 from abc import ABC, abstractmethod
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Optional
 
@@ -57,9 +58,10 @@ class YoloDatasetBase(ABC):
         Path to the YOLO ``data.yaml`` file.
     """
 
-    def __init__(self, dataset_yaml_path: str | Path):
+    def __init__(self, dataset_yaml_path: str | Path, workers: int = 1):
         self.yaml_path = Path(dataset_yaml_path)
         self.yaml_dir = self.yaml_path.parent
+        self.workers = max(1, workers)
 
         cfg = load_dataset_yaml(self.yaml_path)
         self.class_names: dict[int, str] = cfg["names"]
@@ -81,15 +83,23 @@ class YoloDatasetBase(ABC):
         return df
 
     def _process_split(self, split_name: str, images_dir: Path) -> Optional[pd.DataFrame]:
-        """Collect DataFrames from every file in one split."""
+        """Collect DataFrames from every file in one split (parallel when workers > 1)."""
         files = list(self._iter_files(images_dir))
         if not files:
             logger.warning(f"No files for split '{split_name}'")
             return None
 
-        logger.info(f"Split '{split_name}': processing {len(files)} files")
+        logger.info(f"Split '{split_name}': processing {len(files)} files (workers={self.workers})")
 
-        file_dfs = [self._process_file(f, images_dir, split_name) for f in files]
+        def _work(fp: Path):
+            return self._process_file(fp, images_dir, split_name)
+
+        if self.workers > 1:
+            with ThreadPoolExecutor(max_workers=self.workers) as pool:
+                file_dfs = list(pool.map(_work, files))
+        else:
+            file_dfs = [_work(f) for f in files]
+
         file_dfs = [d for d in file_dfs if d is not None and len(d)]
         return pd.concat(file_dfs, ignore_index=True) if file_dfs else None
 

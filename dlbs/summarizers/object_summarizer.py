@@ -14,18 +14,13 @@ It collects following information:
 - n_polygon_points
 
 Usage:
-    python -m dlbs.helpers.summarize_objects --dataset_yaml_path dataset_yolo/data.yaml
-    python -m dlbs.helpers.summarize_objects --dataset_yaml_path dataset_yolo/data.yaml --out objects.csv
+    python -m dlbs.summarizers.object_summarizer --dataset_yaml_path dataset_yolo/data.yaml --out objects.csv
 """
 
 import argparse
 import logging
-from pandas.core.series import Series
-from numpy import ndarray
-from numpy._typing._shape import _Shape
-from numpy._typing._array_like import NDArray
 from pathlib import Path
-from typing import Any, Optional
+from typing import Optional
 
 import numpy as np
 import pandas as pd
@@ -60,7 +55,11 @@ class YoloObjectSummarizer(YoloDatasetBase):
     Parameters:
     ----------
     dataset_yaml_path: Path to the YOLO ``data.yaml`` file.
+    workers: Number of threads for parallel label parsing. 1 = sequential.
     """
+
+    def __init__(self, dataset_yaml_path: str | Path, workers: int = 4):
+        super().__init__(dataset_yaml_path, workers=workers)
 
     def _process_file(self, file_path: Path, images_dir: Path, split: str) -> Optional[pd.DataFrame]:
         """Read one label .txt and return a DataFrame with one row per object."""
@@ -153,14 +152,15 @@ class YoloObjectSummarizer(YoloDatasetBase):
         return images_dir.parent.parent / "labels" / images_dir.name
 
 
-def summarize_objects(dataset_yaml_path: str | Path) -> pd.DataFrame:
+def summarize_objects(dataset_yaml_path: str | Path, workers: int = 4) -> pd.DataFrame:
     """Shortcut to create a Class and execute it."""
-    return YoloObjectSummarizer(dataset_yaml_path).run()
+    return YoloObjectSummarizer(dataset_yaml_path, workers=workers).run()
 
 def args_objects():
     parser = argparse.ArgumentParser(description="Summarize objects from a YOLO dataset into a table.")
     parser.add_argument("--dataset_yaml_path", type=str, required=True, help="Path to the YOLO data.yaml")
     parser.add_argument("--out", type=str, default=None, help="Output CSV path (default: prints summary)")
+    parser.add_argument("--workers", type=int, default=4, help="Parallel threads for label parsing")
     return parser.parse_args()
 
 
@@ -169,7 +169,7 @@ if __name__ == "__main__":
 
     args = args_objects()
 
-    df = summarize_objects(args.dataset_yaml_path)
+    df = summarize_objects(args.dataset_yaml_path, workers=args.workers)
 
     if args.out:
         df.to_csv(args.out, index=False)
@@ -177,7 +177,7 @@ if __name__ == "__main__":
     else:
         print(f"\n{'='*60}")
         print(f"Objects: {len(df)}")
-        print(f"Splits:  {dict[Any, Series | Any | ndarray[_Shape, Any] | NDArray](df['split'].value_counts()) if len(df) else 'none'}")
+        print(f"Splits:  {dict(df['split'].value_counts()) if len(df) else 'none'}")
         print(f"Classes: {dict(df['class_name'].value_counts()) if len(df) else 'none'}")
         print(f"Cities:  {sorted(df['city'].unique()) if len(df) else 'none'}")
         print(f"{'='*60}\n")
