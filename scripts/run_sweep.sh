@@ -7,7 +7,7 @@
 #SBATCH --time=4:00:00
 #SBATCH --output=logs/%x_%A_%a.out
 #SBATCH --error=logs/%x_%A_%a.err
-#SBATCH --array=0-1
+#SBATCH --array=0-5%2
 
 set -euo pipefail
 
