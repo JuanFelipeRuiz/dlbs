@@ -147,6 +147,7 @@ class YoloObjectSummarizer(YoloDatasetBase):
         )
         return df
 
+    @staticmethod
     def _labels_dir_for(images_dir: Path) -> Path:
         """Replace images/train with labels/train"""
         return images_dir.parent.parent / "labels" / images_dir.name
