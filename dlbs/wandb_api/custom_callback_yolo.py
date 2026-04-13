@@ -48,12 +48,12 @@ def _metric_container(validator):
     return getattr(m, "seg", None) or getattr(m, "mask", None)
 
 
-def _get_per_class_seg_arrays(validator):
-    names = getattr(validator, "names", None) or {}
+def _get_per_class_seg_arrays(source):
+    names = getattr(source, "names", None) or {}
     if not names:
         return None
 
-    seg = _metric_container(validator)
+    seg = _metric_container(source)
     if seg is None:
         return None
 
@@ -78,11 +78,77 @@ def _get_per_class_seg_arrays(validator):
     return classes, P, R, AP50
 
 
-def _epoch_from_validator(validator) -> int:
-    trainer = getattr(validator, "trainer", None)
-    if trainer is None:
-        return -1
-    return int(getattr(trainer, "epoch", 0)) + 1
+def _log_per_class_metrics(source, split: str):
+    """
+    Log per-class segmentation metrics to W&B for a split (train or val).
+    """
+    if not _wandb_ready():
+        return
+
+    arr = _get_per_class_seg_arrays(source)
+    if not arr:
+        return
+
+    classes, precision, recall, ap50 = arr
+    log = {}
+
+    for i, name in enumerate(classes):
+        name = str(name).strip()
+        if name.lower() in ("background", "bg", ""):
+            continue
+
+        p = float(precision[i])
+        r = float(recall[i])
+        # Dice from precision/recall: 2PR / (P + R), safe for zero denominator.
+        dice = 0.0 if (p + r) <= 0 else float((2.0 * p * r) / (p + r))
+
+        log[f"class/{split}_precision/{name}"] = p
+        log[f"class/{split}_recall/{name}"] = r
+        log[f"class/{split}_dice/{name}"] = dice
+        log[f"class/{split}_mAP50/{name}"] = float(ap50[i])
+
+    if log:
+        wandb.log(log, step=wandb.run.step)
+
+
+def _to_float_or_none(x):
+    try:
+        return float(x)
+    except Exception:
+        return None
+
+
+def _log_overall_metrics(source, split: str):
+    """
+    Log overall (not per-class) segmentation metrics to W&B.
+    """
+    if not _wandb_ready():
+        return
+
+    seg = _metric_container(source)
+    if seg is None:
+        return
+
+    # Ultralytics metric container usually exposes global means as mp/mr/map50/map.
+    precision = _to_float_or_none(getattr(seg, "mp", None))
+    recall = _to_float_or_none(getattr(seg, "mr", None))
+    map50 = _to_float_or_none(getattr(seg, "map50", None))
+    map5095 = _to_float_or_none(getattr(seg, "map", None))
+
+    log = {}
+    if precision is not None:
+        log[f"overall/{split}_precision"] = precision
+    if recall is not None:
+        log[f"overall/{split}_recall"] = recall
+    if map50 is not None:
+        log[f"overall/{split}_mAP50"] = map50
+    if map5095 is not None:
+        log[f"overall/{split}_mAP50_95"] = map5095
+    if precision is not None and recall is not None:
+        log[f"overall/{split}_dice"] = 0.0 if (precision + recall) <= 0 else (2.0 * precision * recall) / (precision + recall)
+
+    if log:
+        wandb.log(log, step=wandb.run.step)
 
 
 def on_val_batch_end(validator):
@@ -95,7 +161,6 @@ def on_val_batch_end(validator):
     try:
         fr = inspect.currentframe()
         if fr is None or fr.f_back is None or fr.f_back.f_back is None:
-            print("No frame found")
             return
 
         v = fr.f_back.f_back.f_locals
@@ -107,7 +172,6 @@ def on_val_batch_end(validator):
         batch = v.get("batch", None)
         preds = v.get("preds", None)
         if batch is None or preds is None:
-            print("No batch or preds found")
             return
 
         names = getattr(validator, "names", None)
@@ -118,7 +182,6 @@ def on_val_batch_end(validator):
 
         fig = make_val_grid_pred_gt_orig(batch, preds, names=names, max_show=MAX_SHOW)
         if fig is None:
-            print("No figure found")
             return
 
         wandb.log(
@@ -126,13 +189,6 @@ def on_val_batch_end(validator):
             step=wandb.run.step,
         )
         plt.close(fig)
-        m = batch["masks"]
-        print("masks shape:", tuple(m.shape), "dtype:", m.dtype)
-        print("masks unique (sample):", np.unique(m.detach().cpu().numpy())[:20])
-        print("cls shape:", None if batch.get("cls") is None else tuple(batch["cls"].shape))
-        print("batch_idx shape:", None if batch.get("batch_idx") is None else tuple(batch["batch_idx"].shape))
-
-
         grids = make_per_class_grids(batch, preds, names=names, max_show=MAX_SHOW)
 
         for j, (cls_name, cls_fig) in enumerate(grids.items()):
@@ -153,23 +209,20 @@ def on_val_end(validator):
     if not _wandb_ready():
         return
 
-    epoch = _epoch_from_validator(validator)
-    log = {"epoch": epoch}
+    _log_overall_metrics(validator, split="val")
+    _log_per_class_metrics(validator, split="val")
 
-    arr = _get_per_class_seg_arrays(validator)
-    if arr:
-        classes, P, R, AP50 = arr
-        for i, name in enumerate(classes):
-            name = str(name).strip()
-            if name.lower() in ("background", "bg", ""):
-                continue
-            log[f"metrics/seg/precision/{name}"] = float(P[i])
-            log[f"metrics/seg/recall/{name}"] = float(R[i])
-            log[f"metrics/seg/mAP50/{name}"] = float(AP50[i])
 
-    wandb.log(log, step=wandb.run.step)
+def on_train_epoch_end(trainer):
+    """
+    After train epoch: best-effort logging of per-class train metrics.
+    (Only logs if trainer exposes per-class seg arrays.)
+    """
+    _log_overall_metrics(trainer, split="train")
+    _log_per_class_metrics(trainer, split="train")
 
 
 def add_custom_callbacks(model):
     model.add_callback("on_val_batch_end", on_val_batch_end)
     model.add_callback("on_val_end", on_val_end)
+    model.add_callback("on_train_epoch_end", on_train_epoch_end)
