@@ -78,16 +78,11 @@ def _get_per_class_seg_arrays(source):
     return classes, P, R, AP50
 
 
-def _log_per_class_metrics(source, split: str):
-    """
-    Log per-class segmentation metrics to W&B for a split (train or val).
-    """
-    if not _wandb_ready():
-        return
-
+def _collect_per_class_metrics(source, split: str) -> dict:
+    """Collect per-class segmentation metrics for a split (train or val)."""
     arr = _get_per_class_seg_arrays(source)
     if not arr:
-        return
+        return {}
 
     classes, precision, recall, ap50 = arr
     log = {}
@@ -99,7 +94,6 @@ def _log_per_class_metrics(source, split: str):
 
         p = float(precision[i])
         r = float(recall[i])
-        # Dice from precision/recall: 2PR / (P + R), safe for zero denominator.
         dice = 0.0 if (p + r) <= 0 else float((2.0 * p * r) / (p + r))
 
         log[f"class/{split}_precision/{name}"] = p
@@ -107,8 +101,7 @@ def _log_per_class_metrics(source, split: str):
         log[f"class/{split}_dice/{name}"] = dice
         log[f"class/{split}_mAP50/{name}"] = float(ap50[i])
 
-    if log:
-        wandb.log(log, step=wandb.run.step)
+    return log
 
 
 def _to_float_or_none(x):
@@ -118,18 +111,12 @@ def _to_float_or_none(x):
         return None
 
 
-def _log_overall_metrics(source, split: str):
-    """
-    Log overall (not per-class) segmentation metrics to W&B.
-    """
-    if not _wandb_ready():
-        return
-
+def _collect_overall_metrics(source, split: str) -> dict:
+    """Collect overall (not per-class) segmentation metrics."""
     seg = _metric_container(source)
     if seg is None:
-        return
+        return {}
 
-    # Ultralytics metric container usually exposes global means as mp/mr/map50/map.
     precision = _to_float_or_none(getattr(seg, "mp", None))
     recall = _to_float_or_none(getattr(seg, "mr", None))
     map50 = _to_float_or_none(getattr(seg, "map50", None))
@@ -147,8 +134,7 @@ def _log_overall_metrics(source, split: str):
     if precision is not None and recall is not None:
         log[f"overall/{split}_dice"] = 0.0 if (precision + recall) <= 0 else (2.0 * precision * recall) / (precision + recall)
 
-    if log:
-        wandb.log(log, step=wandb.run.step)
+    return log
 
 
 def on_val_batch_end(validator):
@@ -184,17 +170,16 @@ def on_val_batch_end(validator):
         if fig is None:
             return
 
-        wandb.log(
-            {"predictions/val_first_batch_custom_grid": wandb.Image(fig)},
-            step=wandb.run.step,
-        )
-        plt.close(fig)
+        log = {"predictions/val_first_batch_custom_grid": wandb.Image(fig)}
+
         grids = make_per_class_grids(batch, preds, names=names, max_show=MAX_SHOW)
+        for cls_name, cls_fig in grids.items():
+            log[f"predictions/val_first_batch_class/{cls_name}"] = wandb.Image(cls_fig)
 
-        for j, (cls_name, cls_fig) in enumerate(grids.items()):
+        wandb.log(log, commit=False)
 
-            key = f"predictions/val_first_batch_class/{cls_name}"
-            wandb.log({key: wandb.Image(cls_fig)}, step=wandb.run.step)
+        plt.close(fig)
+        for cls_fig in grids.values():
             plt.close(cls_fig)
 
 
@@ -204,13 +189,17 @@ def on_val_batch_end(validator):
 
 def on_val_end(validator):
     """
-    After validation: log per-class segmentation metrics.
+    After validation: log overall + per-class segmentation metrics in one call.
     """
     if not _wandb_ready():
         return
 
-    _log_overall_metrics(validator, split="val")
-    _log_per_class_metrics(validator, split="val")
+    log = {}
+    log.update(_collect_overall_metrics(validator, split="val"))
+    log.update(_collect_per_class_metrics(validator, split="val"))
+
+    if log:
+        wandb.log(log, commit=False)
 
 
 def on_train_epoch_end(trainer):
@@ -218,8 +207,15 @@ def on_train_epoch_end(trainer):
     After train epoch: best-effort logging of per-class train metrics.
     (Only logs if trainer exposes per-class seg arrays.)
     """
-    _log_overall_metrics(trainer, split="train")
-    _log_per_class_metrics(trainer, split="train")
+    if not _wandb_ready():
+        return
+
+    log = {}
+    log.update(_collect_overall_metrics(trainer, split="train"))
+    log.update(_collect_per_class_metrics(trainer, split="train"))
+
+    if log:
+        wandb.log(log, commit=False)
 
 
 def add_custom_callbacks(model):
