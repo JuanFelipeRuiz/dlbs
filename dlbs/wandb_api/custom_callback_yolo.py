@@ -78,6 +78,13 @@ def _get_per_class_seg_arrays(source):
     return classes, P, R, AP50
 
 
+def _epoch_from_validator(validator) -> int:
+    trainer = getattr(validator, "trainer", None)
+    if trainer is None:
+        return -1
+    return int(getattr(trainer, "epoch", 0)) + 1
+
+
 def _collect_per_class_metrics(source, split: str) -> dict:
     """Collect per-class segmentation metrics for a split (train or val)."""
     arr = _get_per_class_seg_arrays(source)
@@ -176,7 +183,7 @@ def on_val_batch_end(validator):
         for cls_name, cls_fig in grids.items():
             log[f"predictions/val_first_batch_class/{cls_name}"] = wandb.Image(cls_fig)
 
-        wandb.log(log, commit=False)
+        wandb.log(log, step=wandb.run.step)
 
         plt.close(fig)
         for cls_fig in grids.values():
@@ -194,12 +201,11 @@ def on_val_end(validator):
     if not _wandb_ready():
         return
 
-    log = {}
+    log = {"epoch": _epoch_from_validator(validator)}
     log.update(_collect_overall_metrics(validator, split="val"))
     log.update(_collect_per_class_metrics(validator, split="val"))
 
-    if log:
-        wandb.log(log, commit=False)
+    wandb.log(log, step=wandb.run.step)
 
 
 def on_train_epoch_end(trainer):
@@ -215,7 +221,7 @@ def on_train_epoch_end(trainer):
     log.update(_collect_per_class_metrics(trainer, split="train"))
 
     if log:
-        wandb.log(log, commit=False)
+        wandb.log(log, step=wandb.run.step)
 
 
 def add_custom_callbacks(model):
