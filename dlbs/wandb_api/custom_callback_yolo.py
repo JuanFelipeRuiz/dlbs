@@ -177,16 +177,16 @@ def on_val_batch_end(validator):
         if fig is None:
             return
 
-        log = {"predictions/val_first_batch_custom_grid": wandb.Image(fig)}
+        wandb.log(
+            {"predictions/val_first_batch_custom_grid": wandb.Image(fig)},
+            step=wandb.run.step,
+        )
+        plt.close(fig)
 
         grids = make_per_class_grids(batch, preds, names=names, max_show=MAX_SHOW)
         for cls_name, cls_fig in grids.items():
-            log[f"predictions/val_first_batch_class/{cls_name}"] = wandb.Image(cls_fig)
-
-        wandb.log(log, step=wandb.run.step)
-
-        plt.close(fig)
-        for cls_fig in grids.values():
+            key = f"predictions/val_first_batch_class/{cls_name}"
+            wandb.log({key: wandb.Image(cls_fig)}, step=wandb.run.step)
             plt.close(cls_fig)
 
 
