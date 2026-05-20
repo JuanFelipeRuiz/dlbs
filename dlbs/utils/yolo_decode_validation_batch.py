@@ -52,104 +52,51 @@ def _resize_masks_nn(masks: np.ndarray, out_hw: tuple[int, int]) -> np.ndarray:
     return out
 
 
-def pred_instances(pred_item):
+def pred_instances(pred_item: dict):
     """Extract predicted masks, class ids, and confidences from one prediction.
 
-    Supports both dict outputs (newer Ultralytics versions) and Results-like
-    objects with .masks and .boxes attributes.
+    Expects the dict format produced by Ultralytics 8.3.x with keys
+    'masks', 'cls', 'conf'.
 
     Args:
-        pred_item: Single prediction — either a dict with keys like "masks",
-            "cls", "conf", or an Ultralytics Results object.
+        pred_item: Prediction dict with keys 'bboxes', 'conf', 'cls', 'masks'.
 
     Returns:
         Tuple (masks_bool, cls_ids, confs) where masks_bool is (N,h,w) bool
         or None, cls_ids is (N,) int or None, confs is (N,) float or None.
         Predictions with confidence below 0.5 are filtered out.
     """
-    if isinstance(pred_item, dict):
-        print(f"[pred_instances] dict path — keys: {list(pred_item.keys())}")
-        masks = None
-        for k in ("masks", "mask", "segments", "mask_probs"):
-            if k in pred_item:
-                masks = pred_item[k]
-                break
-
-        cls_ids = None
-        for k in ("cls", "classes", "class_ids"):
-            if k in pred_item:
-                cls_ids = pred_item[k]
-                break
-
-        confs = None
-        for k in ("conf", "confs", "scores"):
-            if k in pred_item:
-                confs = pred_item[k]
-                break
-
-        masks_bool = None
-        if masks is not None:
-            try:
-                if hasattr(masks, "detach"):
-                    masks = masks.detach().float().cpu().numpy()
-                else:
-                    masks = np.asarray(masks)
-                if masks.ndim == 3 and masks.shape[0] > 0:
-                    masks_bool = masks > 0.5
-            except Exception:
-                masks_bool = None
-
-        if cls_ids is not None:
-            try:
-                if hasattr(cls_ids, "detach"):
-                    cls_ids = cls_ids.detach().cpu().numpy()
-                cls_ids = np.asarray(cls_ids).astype(int).reshape(-1)
-            except Exception:
-                cls_ids = None
-
-        if confs is not None:
-            try:
-                if hasattr(confs, "detach"):
-                    confs = confs.detach().cpu().numpy()
-                confs = np.asarray(confs).astype(float).reshape(-1)
-            except Exception:
-                confs = None
-
-        if masks_bool is not None and cls_ids is not None:
-            n = min(masks_bool.shape[0], cls_ids.shape[0])
-            masks_bool = masks_bool[:n]
-            cls_ids = cls_ids[:n]
-            if confs is not None:
-                confs = confs[:n]
-
-        if confs is not None:
-            keep = confs >= 0.5
-            if masks_bool is not None:
-                masks_bool = masks_bool[keep]
-            if cls_ids is not None:
-                cls_ids = cls_ids[keep]
-            confs = confs[keep]
-
-        return masks_bool, cls_ids, confs
-
-    # Results-like object path
-    print(f"[pred_instances] Results path — type: {type(pred_item)}")
-    masks = getattr(pred_item, "masks", None)
-    boxes = getattr(pred_item, "boxes", None)
+    masks = pred_item.get("masks", None)
+    cls_ids = pred_item.get("cls", None)
+    confs = pred_item.get("conf", None)
 
     masks_bool = None
-    if masks is not None and getattr(masks, "data", None) is not None:
-        m = masks.data.detach().float().cpu().numpy()
-        if m.ndim == 3 and m.shape[0] > 0:
-            masks_bool = m > 0.5
+    if masks is not None:
+        try:
+            if hasattr(masks, "detach"):
+                masks = masks.detach().float().cpu().numpy()
+            else:
+                masks = np.asarray(masks)
+            if masks.ndim == 3 and masks.shape[0] > 0:
+                masks_bool = masks > 0.5
+        except Exception:
+            masks_bool = None
 
-    cls_ids = None
-    confs = None
-    if boxes is not None:
-        if getattr(boxes, "cls", None) is not None:
-            cls_ids = boxes.cls.detach().cpu().numpy().astype(int).reshape(-1)
-        if getattr(boxes, "conf", None) is not None:
-            confs = boxes.conf.detach().cpu().numpy().astype(float).reshape(-1)
+    if cls_ids is not None:
+        try:
+            if hasattr(cls_ids, "detach"):
+                cls_ids = cls_ids.detach().cpu().numpy()
+            cls_ids = np.asarray(cls_ids).astype(int).reshape(-1)
+        except Exception:
+            cls_ids = None
+
+    if confs is not None:
+        try:
+            if hasattr(confs, "detach"):
+                confs = confs.detach().cpu().numpy()
+            confs = np.asarray(confs).astype(float).reshape(-1)
+        except Exception:
+            confs = None
 
     if masks_bool is not None and cls_ids is not None:
         n = min(masks_bool.shape[0], cls_ids.shape[0])
@@ -157,6 +104,14 @@ def pred_instances(pred_item):
         cls_ids = cls_ids[:n]
         if confs is not None:
             confs = confs[:n]
+
+    if confs is not None:
+        keep = confs >= 0.5
+        if masks_bool is not None:
+            masks_bool = masks_bool[keep]
+        if cls_ids is not None:
+            cls_ids = cls_ids[keep]
+        confs = confs[keep]
 
     return masks_bool, cls_ids, confs
 
