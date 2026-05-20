@@ -24,16 +24,8 @@ from dlbs.plots.yolo_val_viz import make_val_grid_pred_gt_orig, make_per_class_g
 logger = logging.getLogger(__name__)
 
 
-# max columns in the grid for the first batch visualization
-MAX_SHOW = 4  
-
-
 def _wandb_ready() -> bool:
-    """Check if a W&B run is active.
-
-    Returns:
-        True if wandb.run is initialized, False otherwise.
-    """
+    """Check if a W&B run is active."""
     return wandb.run is not None
 
 
@@ -62,11 +54,7 @@ def _to_arr(x, n):
 def _metric_container(validator):
     """Extract the segmentation metric object from a validator or trainer.
 
-    Args:
-        validator: Ultralytics validator or trainer instance.
-
-    Returns:
-        The seg or mask metric container, or None if unavailable.
+    Returns the seg or mask metric container, or None if unavailable.
     """
     m = getattr(validator, "metrics", None)
     if m is None:
@@ -76,14 +64,9 @@ def _metric_container(validator):
 
 def _get_per_class_seg_arrays(source):
     """Extract per-class precision, recall, and AP50 arrays from a source.
-
-    Args:
-        source: Ultralytics validator or trainer with a names attribute and
-            segmentation metrics.
-
-    Returns:
-        (classes, P, R, AP50) where each metric is a np.ndarray
-            of length nc, or None if metrics are unavailable.
+    
+    Returns (classes, P, R, AP50) where each metric is a np.ndarray
+        of length nc, or None if metrics are unavailable.
     """
     names = getattr(source, "names", None) or {}
     if not names:
@@ -97,8 +80,8 @@ def _get_per_class_seg_arrays(source):
     nc = len(classes)
 
     # precision and recall are directly available on the seg container
-    P = _to_arr(getattr(seg, "p", None), nc)
-    R = _to_arr(getattr(seg, "r", None), nc)
+    precision = _to_arr(getattr(seg, "p", None), nc)
+    recall = _to_arr(getattr(seg, "r", None), nc)
 
     ap50 = getattr(seg, "ap50", None)
     ap = getattr(seg, "ap", None)
@@ -110,20 +93,16 @@ def _get_per_class_seg_arrays(source):
         if ap_arr.ndim == 2 and ap_arr.shape[0] >= nc and ap_arr.shape[1] >= 1:
             AP50 = _to_arr(ap_arr[:nc, 0], nc)
 
-    if P is None or R is None or AP50 is None:
+    if precision is None or recall is None or AP50 is None:
         return None
 
-    return classes, P, R, AP50
+    return classes, precision, recall, AP50
 
 
 def _epoch_from_validator(validator) -> int:
     """Get the current 1-based epoch number from a validator.
 
-    Args:
-        validator: Ultralytics validator with an optional trainer attribute.
-
-    Returns:
-        Current epoch (1-based), or -1 if trainer is not available.
+    Returns current epoch (1-based), or -1 if trainer is not available.
     """
     trainer = getattr(validator, "trainer", None)
     if trainer is None:
@@ -167,14 +146,7 @@ def _collect_per_class_metrics(source, split: str) -> dict:
 
 
 def _to_float_or_none(x):
-    """Safely cast a value to float.
-
-    Args:
-        x: Value to convert.
-
-    Returns:
-        Float value, or None if conversion fails.
-    """
+    """Cast a value to float. Returns None if conversion fails."""
     try:
         return float(x)
     except Exception:
@@ -219,13 +191,14 @@ def _collect_overall_metrics(source, split: str) -> dict:
 def on_val_batch_end(validator):
     """YOLO callback: log prediction grid for the first validation batch.
 
-    Fires on every ``on_val_batch_end`` event but only processes batch_i==0.
-    Uses frame inspection to access the batch and preds locals from the
+    Fires on every ``on_val_batch_end`` event but only processes part of first 
+    batch_i==0. Uses frame inspection to access the batch and preds locals from the
     Ultralytics validation loop.
-
-    Args:
-        validator: Ultralytics validator instance passed by the callback system.
     """
+
+    # max columns in the grid for the first batch visualization
+    MAX_SHOW = 4  
+
     if not _wandb_ready():
         return
 
@@ -260,7 +233,7 @@ def on_val_batch_end(validator):
             return
 
         wandb.log(
-            {"predictions/val_first_batch_custom_grid": wandb.Image(fig)},
+            {"instance_segmentation/val_first_batch_custom_grid": wandb.Image(fig)},
             step=wandb.run.step,
         )
         plt.close(fig)
@@ -268,7 +241,7 @@ def on_val_batch_end(validator):
         # log one grid per class so per-class predictions are easy to inspect
         grids = make_per_class_grids(batch, preds, names=names, max_show=MAX_SHOW)
         for cls_name, cls_fig in grids.items():
-            key = f"predictions/val_first_batch_class/{cls_name}"
+            key = f"instance_segmentation/val_first_batch_class/{cls_name}"
             wandb.log({key: wandb.Image(cls_fig)}, step=wandb.run.step)
             plt.close(cls_fig)
 
@@ -295,10 +268,7 @@ def on_val_end(validator):
 def on_train_epoch_end(trainer):
     """YOLO callback: log per-class train metrics after each epoch.
 
-    Best-effort — skips silently if the trainer does not expose seg arrays.
-
-    Args:
-        trainer: Ultralytics trainer instance passed by the callback system.
+    skips  if the trainer does not expose seg arrays.
     """
     if not _wandb_ready():
         return
@@ -312,11 +282,7 @@ def on_train_epoch_end(trainer):
 
 
 def add_custom_callbacks(model):
-    """Register all custom W&B callbacks on a YOLO model.
-
-    Args:
-        model: Ultralytics YOLO model instance.
-    """
+    """Register all custom W&B callbacks on a YOLO model."""
     model.add_callback("on_val_batch_end", on_val_batch_end)
     model.add_callback("on_val_end", on_val_end)
     model.add_callback("on_train_epoch_end", on_train_epoch_end)
