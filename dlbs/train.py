@@ -121,6 +121,8 @@ def train(cfg_path: str, cli_overrides: dict):
         except Exception as e:
             print(f"Could not add custom wandb callbacks: {e}")
 
+    else:
+        print("module not loaded")
     # Train
     results = model.train(**cfg)
 
