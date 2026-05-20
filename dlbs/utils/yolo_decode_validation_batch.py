@@ -116,12 +116,8 @@ def pred_instances(pred_item: dict):
 def gt_instances_from_batch(batch: dict, img_index: int, out_hw: tuple[int, int], names=None):
     """Extract ground truth instance masks and class ids for one image.
 
-    Handles three mask formats Ultralytics may produce:
-
-    A) Per-instance masks (N,h,w) with batch_idx (N,) and cls (N,).
-    B) Overlap mask (B,h,w) where pixel value is a local instance id (1..k);
-       class mapping comes from cls/batch_idx.
-    C) Semantic mask (B,h,w) where pixel value is the class id (fallback).
+    Expects overlap-mask format (B,h,w) where each pixel value is a local
+    instance id (1..k). Class mapping is resolved from cls/batch_idx.
 
     Args:
         batch: Ultralytics batch dict containing "masks", "batch_idx", "cls".
@@ -133,80 +129,25 @@ def gt_instances_from_batch(batch: dict, img_index: int, out_hw: tuple[int, int]
         Tuple (masks_bool, cls_ids) where masks_bool is (N,H,W) bool or None
         and cls_ids is (N,) int or None.
     """
-    def _shape_or_none(x):
-        return None if x is None else tuple(np.asarray(x).shape)
-
-    def _dbg_return(tag, masks_bool, cls_ids):
-        print(
-            "[gt_instances_from_batch] "
-            f"RETURN {tag} img_index={img_index} "
-            f"masks_shape={_shape_or_none(masks_bool)} "
-            f"cls_shape={_shape_or_none(cls_ids)}"
-        )
-        return masks_bool, cls_ids
-
-    print(
-        "[gt_instances_from_batch] "
-        f"ENTER img_index={img_index} out_hw={out_hw}"
-    )
-    names = _normalize_names(names)
-    nc = (max(names.keys()) + 1) if names else None
+    _ = _normalize_names(names)  # keep call for API compatibility
 
     masks_all = batch.get("masks", None)
     bidx = batch.get("batch_idx", None)
     cls_all = batch.get("cls", None)
 
     if masks_all is None:
-        print("[gt_instances_from_batch] missing 'masks' in batch")
-        return _dbg_return("NO_MASKS", None, None)
+        return None, None
 
     ma = _torch_to_np(masks_all)
     if ma is None:
-        print("[gt_instances_from_batch] failed to convert 'masks' to numpy")
-        return _dbg_return("MASK_CONVERT_FAILED", None, None)
+        return None, None
 
     H, W = out_hw
 
-    # Case A: per-instance masks (N,h,w) with batch_idx
-    if ma.ndim == 3 and bidx is not None:
-        print(
-            "[gt_instances_from_batch] CASE_A_CANDIDATE "
-            f"ma_shape={ma.shape}"
-        )
-        b = _torch_to_np(bidx)
-        c = _torch_to_np(cls_all) if cls_all is not None else None
-        if b is not None:
-            b = b.astype(int).reshape(-1)
-            if ma.shape[0] == b.shape[0]:
-
-                sel = (b == int(img_index))
-                masks = ma[sel]
-                if masks.size == 0:
-                    return _dbg_return("CASE_A_EMPTY_FOR_IMAGE", None, None)
-                if masks.shape[-2:] != (H, W):
-                    masks = _resize_masks_nn(masks, (H, W))
-                masks_bool = masks > 0.5
-                cls_ids = None
-                if c is not None:
-                    c = c.reshape(-1)
-                    if c.shape[0] == b.shape[0]:
-                        cls_ids = c[sel].astype(int)
-                return _dbg_return("CASE_A_OK", masks_bool, cls_ids)
-            print(
-                "[gt_instances_from_batch] CASE_A_REJECTED "
-                f"ma_n={ma.shape[0]} b_n={b.shape[0]}"
-            )
-        else:
-            print("[gt_instances_from_batch] CASE_A_REJECTED batch_idx convert failed")
-
-    # Cases B and C: per-image mask (B,h,w)
+    # Case B: overlap instance-id mask as per-image tensor (B,h,w)
     if ma.ndim == 3:
-        print(
-            "[gt_instances_from_batch] CASE_B_OR_C_CANDIDATE "
-            f"ma_shape={ma.shape}"
-        )
         if img_index >= ma.shape[0]:
-            return _dbg_return("CASE_BC_IMG_INDEX_OOB", None, None)
+            return None, None
 
         m = ma[img_index]
         if m.shape != (H, W):
@@ -215,33 +156,8 @@ def gt_instances_from_batch(batch: dict, img_index: int, out_hw: tuple[int, int]
         m_int = np.rint(m).astype(np.int64)
         u = np.unique(m_int)
 
-        # Case C: semantic mask where pixel value == class id
-        if nc is not None and u.size and u.max() <= (nc - 1):
-            print(
-                "[gt_instances_from_batch] CASE_C_CANDIDATE "
-                f"unique_values={u.tolist()}"
-            )
-            masks = []
-            cls_ids = []
-            for cid in u.tolist():
-                if cid == 0:
-                    continue
-                mm = (m_int == cid)
-                if mm.any():
-                    print(f"[gt_instances_from_batch] CASE_C_ADD_CLASS cid={cid}")
-                    masks.append(mm)
-                    cls_ids.append(int(cid))
-            if not masks:
-                return _dbg_return("CASE_C_EMPTY_NONZERO_CLASSES", None, None)
-            return _dbg_return(
-                "CASE_C_OK",
-                np.stack(masks, axis=0).astype(bool),
-                np.asarray(cls_ids, dtype=int),
-            )
-
         # Case B: overlap instance-id mask; no class mapping available
         if bidx is None or cls_all is None:
-            print("[gt_instances_from_batch] CASE_B_NO_CLASS_MAPPING")
             masks = []
             for inst_id in u.tolist():
                 if inst_id == 0:
@@ -250,13 +166,13 @@ def gt_instances_from_batch(batch: dict, img_index: int, out_hw: tuple[int, int]
                 if mm.any():
                     masks.append(mm)
             if not masks:
-                return _dbg_return("CASE_B_EMPTY_NONZERO_IDS", None, None)
-            return _dbg_return("CASE_B_OK_NO_CLS", np.stack(masks, axis=0).astype(bool), None)
+                return None, None
+            return np.stack(masks, axis=0).astype(bool), None
 
         b = _torch_to_np(bidx)
         c = _torch_to_np(cls_all)
         if b is None or c is None:
-            return _dbg_return("CASE_B_MAP_CONVERT_FAILED", None, None)
+            return None, None
         b = b.astype(int).reshape(-1)
         c = c.reshape(-1).astype(int)
 
@@ -275,15 +191,12 @@ def gt_instances_from_batch(batch: dict, img_index: int, out_hw: tuple[int, int]
             cls_ids.append(int(cls_img[local_id - 1]))
 
         if not masks:
-            return _dbg_return("CASE_B_EMPTY_AFTER_LOCAL_ID_LOOP", None, None)
+            return None, None
 
         masks_bool = np.stack(masks, axis=0).astype(bool)
         cls_ids = np.asarray(cls_ids, dtype=int)
-
-
-        return _dbg_return("CASE_B_OK_WITH_CLS", masks_bool, cls_ids)
-    print("[gt_instances_from_batch] unrecognized mask format")
-    return _dbg_return("UNRECOGNIZED_FORMAT", None, None)
+        return masks_bool, cls_ids
+    return None, None
 
 
 def filter_by_class(masks_bool, cls_ids, class_id: int):
