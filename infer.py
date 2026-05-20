@@ -1,11 +1,11 @@
 '''
 usage on one image:
-    python infer.py --model runs/segment/yolo-seg-baseline-no-aug/weights/best.pt \
+    python infer.py --model /mnt/nas05/clusterdata01/home2/juan.ruizlopez/Repos/dlbs/runs/segment/yolo-seg-baseline-no-aug24/weights/best.pt \
                     --image path/to/your/image.jpg
 
 usage with path:
-    python infer.py --model runs/segment/yolo-seg-baseline-no-aug/weights/best.pt \
-                    --image path/to/your/image.jpg \
+    python infer.py --model /mnt/nas05/clusterdata01/home2/juan.ruizlopez/Repos/dlbs/runs/segment/yolo-seg-baseline-no-aug24/weights/best.pt\
+                    --image  /mnt/nas05/data01/slg-q1/dlbs/yolo_dataset/images/val/munster_000167_000019_leftImg8bit.png \
                     --out outputs/segmentation_result.jpg
 '''
 import argparse
