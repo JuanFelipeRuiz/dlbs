@@ -142,16 +142,19 @@ def gt_instances_from_batch(batch: dict, img_index: int, out_hw: tuple[int, int]
     cls_all = batch.get("cls", None)
 
     if masks_all is None:
+        print("No 'masks' key in batch; cannot extract GT instances.")  # Debug print
         return None, None
 
     ma = _torch_to_np(masks_all)
     if ma is None:
+        print("Failed to convert masks to numpy array.")  # Debug print
         return None, None
 
     H, W = out_hw
 
     # Case A: per-instance masks (N,h,w) with batch_idx
     if ma.ndim == 3 and bidx is not None:
+        print("Case A: per-instance masks with batch_idx")  # Debug print
         b = _torch_to_np(bidx)
         c = _torch_to_np(cls_all) if cls_all is not None else None
         if b is not None:
@@ -174,6 +177,7 @@ def gt_instances_from_batch(batch: dict, img_index: int, out_hw: tuple[int, int]
 
     # Cases B and C: per-image mask (B,h,w)
     if ma.ndim == 3:
+        print("Case B or C: per-image mask")  # Debug print
         if img_index >= ma.shape[0]:
             return None, None
 
@@ -186,7 +190,7 @@ def gt_instances_from_batch(batch: dict, img_index: int, out_hw: tuple[int, int]
 
         # Case C: semantic mask where pixel value == class id
         if nc is not None and u.size and u.max() <= (nc - 1):
-
+            print(f"Case C: Found unique class ids {u.tolist()}")  # Debug print
             masks = []
             cls_ids = []
             for cid in u.tolist():
@@ -194,6 +198,7 @@ def gt_instances_from_batch(batch: dict, img_index: int, out_hw: tuple[int, int]
                     continue
                 mm = (m_int == cid)
                 if mm.any():
+                    print(f"Case C: Found mask for class {cid}")  # Debug print
                     masks.append(mm)
                     cls_ids.append(int(cid))
             if not masks:
@@ -202,7 +207,7 @@ def gt_instances_from_batch(batch: dict, img_index: int, out_hw: tuple[int, int]
 
         # Case B: overlap instance-id mask; no class mapping available
         if bidx is None or cls_all is None:
-
+            print("Case B: overlap instance-id mask without batch_idx or cls")  # Debug print
             masks = []
             for inst_id in u.tolist():
                 if inst_id == 0:
@@ -243,7 +248,7 @@ def gt_instances_from_batch(batch: dict, img_index: int, out_hw: tuple[int, int]
 
 
         return masks_bool, cls_ids
-
+    print("Unrecognized mask format in batch; cannot extract GT instances.")  # Debug print
     return None, None
 
 
