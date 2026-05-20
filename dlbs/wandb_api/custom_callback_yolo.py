@@ -1,15 +1,16 @@
-# yolocustom_wand.py
 """
-Ultralytics YOLO Segmentation + W&B (modular + clean)
+Custom W&B callbacks for YOLO11 segmentation training.
 
-Logs:
-- first validation batch custom grid (every epoch)
-- per-class segmentation metrics (every epoch)
+After each validation batch, agrid is logged to W&B
+showing ground truth masks alongside model predictions. After each epoch, overall
+and per-class mask metrics (precision, recall, mAP50, dice) are logged under the
+val/ and class/ namespaces.
 
-No debug logs.
-No custom step metrics.
-No validator.plots access.
-Docs-style callback usage (inspect for val batch locals).
+Callbacks are registered via add_custom_callbacks(model) before model.train().
+
+As we are not sure how we can mock a run without the full wandb and ultralytics 
+training loop, these are best tested in an integration test with a real W&B run and 
+cannot be run as standalone file or unit test. 
 """
 
 import inspect
@@ -22,14 +23,31 @@ from dlbs.plots.yolo_val_viz import make_val_grid_pred_gt_orig, make_per_class_g
 
 logger = logging.getLogger(__name__)
 
-MAX_SHOW = 4  # max columns in the grid
+
+# max columns in the grid for the first batch visualization
+MAX_SHOW = 4  
 
 
 def _wandb_ready() -> bool:
+    """Check if a W&B run is active.
+
+    Returns:
+        True if wandb.run is initialized, False otherwise.
+    """
     return wandb.run is not None
 
 
 def _to_arr(x, n):
+    """Convert a value to a cleaned numpy array of length n.
+
+    Args:
+        x: Input value (array-like, list, tuple, or None).
+        n: Expected length; returns None if input is shorter.
+
+    Returns:
+        Float array of length n with NaN/inf replaced by 0,
+            or None if input is invalid or too short.
+    """
     if x is None:
         return None
     if isinstance(x, (list, tuple)) and len(x) == 0:
@@ -42,6 +60,14 @@ def _to_arr(x, n):
 
 
 def _metric_container(validator):
+    """Extract the segmentation metric object from a validator or trainer.
+
+    Args:
+        validator: Ultralytics validator or trainer instance.
+
+    Returns:
+        The seg or mask metric container, or None if unavailable.
+    """
     m = getattr(validator, "metrics", None)
     if m is None:
         return None
@@ -49,6 +75,16 @@ def _metric_container(validator):
 
 
 def _get_per_class_seg_arrays(source):
+    """Extract per-class precision, recall, and AP50 arrays from a source.
+
+    Args:
+        source: Ultralytics validator or trainer with a names attribute and
+            segmentation metrics.
+
+    Returns:
+        (classes, P, R, AP50) where each metric is a np.ndarray
+            of length nc, or None if metrics are unavailable.
+    """
     names = getattr(source, "names", None) or {}
     if not names:
         return None
@@ -60,12 +96,14 @@ def _get_per_class_seg_arrays(source):
     classes = [names[i] for i in sorted(names)]
     nc = len(classes)
 
+    # precision and recall are directly available on the seg container
     P = _to_arr(getattr(seg, "p", None), nc)
     R = _to_arr(getattr(seg, "r", None), nc)
 
     ap50 = getattr(seg, "ap50", None)
     ap = getattr(seg, "ap", None)
 
+    # ap50 may be a flat array or the first column of a 2D ap matrix
     AP50 = _to_arr(ap50, nc)
     if AP50 is None and ap is not None:
         ap_arr = np.asarray(ap, dtype=float)
@@ -79,6 +117,14 @@ def _get_per_class_seg_arrays(source):
 
 
 def _epoch_from_validator(validator) -> int:
+    """Get the current 1-based epoch number from a validator.
+
+    Args:
+        validator: Ultralytics validator with an optional trainer attribute.
+
+    Returns:
+        Current epoch (1-based), or -1 if trainer is not available.
+    """
     trainer = getattr(validator, "trainer", None)
     if trainer is None:
         return -1
@@ -86,7 +132,16 @@ def _epoch_from_validator(validator) -> int:
 
 
 def _collect_per_class_metrics(source, split: str) -> dict:
-    """Collect per-class segmentation metrics for a split (train or val)."""
+    """Collect per-class segmentation metrics for a given split.
+
+    Args:
+        source: Ultralytics validator or trainer exposing names and seg metrics.
+        split: Dataset split label, e.g. "train" or "val".
+
+    Returns:
+        W&B log dict with keys like class/{split}_precision/{name},
+            _recall, _dice, _mAP50. Empty dict if metrics are unavailable.
+    """
     arr = _get_per_class_seg_arrays(source)
     if not arr:
         return {}
@@ -103,15 +158,23 @@ def _collect_per_class_metrics(source, split: str) -> dict:
         r = float(recall[i])
         dice = 0.0 if (p + r) <= 0 else float((2.0 * p * r) / (p + r))
 
-        log[f"class/{split}_precision/{name}"] = p
-        log[f"class/{split}_recall/{name}"] = r
-        log[f"class/{split}_dice/{name}"] = dice
-        log[f"class/{split}_mAP50/{name}"] = float(ap50[i])
+        log[f"class/{split}_mask_precision/{name}"] = p
+        log[f"class/{split}_mask_recall/{name}"] = r
+        log[f"class/{split}_mask_dice/{name}"] = dice
+        log[f"class/{split}_mask_mAP50/{name}"] = float(ap50[i])
 
     return log
 
 
 def _to_float_or_none(x):
+    """Safely cast a value to float.
+
+    Args:
+        x: Value to convert.
+
+    Returns:
+        Float value, or None if conversion fails.
+    """
     try:
         return float(x)
     except Exception:
@@ -119,7 +182,16 @@ def _to_float_or_none(x):
 
 
 def _collect_overall_metrics(source, split: str) -> dict:
-    """Collect overall (not per-class) segmentation metrics."""
+    """Collect aggregated segmentation metrics across all classes.
+
+    Args:
+        source: Ultralytics validator or trainer exposing seg metrics.
+        split: Dataset split label, e.g. "train" or "val".
+
+    Returns:
+        W&B log dict with keys like overall/{split}_precision,
+            _recall, _mAP50, _mAP50_95, _dice. Empty dict if metrics are unavailable.
+    """
     seg = _metric_container(source)
     if seg is None:
         return {}
@@ -131,33 +203,41 @@ def _collect_overall_metrics(source, split: str) -> dict:
 
     log = {}
     if precision is not None:
-        log[f"overall/{split}_precision"] = precision
+        log[f"{split}/mask_precision"] = precision
     if recall is not None:
-        log[f"overall/{split}_recall"] = recall
+        log[f"{split}/mask_recall"] = recall
     if map50 is not None:
-        log[f"overall/{split}_mAP50"] = map50
+        log[f"{split}/mask_mAP50"] = map50
     if map5095 is not None:
-        log[f"overall/{split}_mAP50_95"] = map5095
+        log[f"{split}/mask_mAP50_95"] = map5095
     if precision is not None and recall is not None:
-        log[f"overall/{split}_dice"] = 0.0 if (precision + recall) <= 0 else (2.0 * precision * recall) / (precision + recall)
+        log[f"{split}/mask_dice"] = 0.0 if (precision + recall) <= 0 else (2.0 * precision * recall) / (precision + recall)
 
     return log
 
 
 def on_val_batch_end(validator):
-    """
-    First validation batch (batch_i==0): log custom 3xN grid to W&B.
+    """YOLO callback: log prediction grid for the first validation batch.
+
+    Fires on every ``on_val_batch_end`` event but only processes batch_i==0.
+    Uses frame inspection to access the batch and preds locals from the
+    Ultralytics validation loop.
+
+    Args:
+        validator: Ultralytics validator instance passed by the callback system.
     """
     if not _wandb_ready():
         return
 
     try:
+        # walk up two frames to reach the Ultralytics validation loop locals
         fr = inspect.currentframe()
         if fr is None or fr.f_back is None or fr.f_back.f_back is None:
             return
 
         v = fr.f_back.f_back.f_locals
 
+        # only process the first batch 
         batch_i = v.get("batch_i", None)
         if batch_i is None or int(batch_i) != 0:
             return
@@ -167,12 +247,14 @@ def on_val_batch_end(validator):
         if batch is None or preds is None:
             return
 
+        # normalise names to a dict regardless of how Ultralytics exposes it
         names = getattr(validator, "names", None)
         if isinstance(names, list):
             names = {i: n for i, n in enumerate(names)}
         elif not isinstance(names, dict):
             names = {}
 
+        # log the combined pred/gt/orig grid for the whole batch and all classes
         fig = make_val_grid_pred_gt_orig(batch, preds, names=names, max_show=MAX_SHOW)
         if fig is None:
             return
@@ -183,20 +265,22 @@ def on_val_batch_end(validator):
         )
         plt.close(fig)
 
+        # log one grid per class so per-class predictions are easy to inspect
         grids = make_per_class_grids(batch, preds, names=names, max_show=MAX_SHOW)
         for cls_name, cls_fig in grids.items():
             key = f"predictions/val_first_batch_class/{cls_name}"
             wandb.log({key: wandb.Image(cls_fig)}, step=wandb.run.step)
             plt.close(cls_fig)
 
-
     except Exception as e:
         logger.warning(f"custom val grid failed: {e}")
 
 
 def on_val_end(validator):
-    """
-    After validation: log overall + per-class segmentation metrics in one call.
+    """YOLO callback: log overall and per-class segmentation metrics after validation.
+
+    Args:
+        validator: Ultralytics validator instance passed by the callback system.
     """
     if not _wandb_ready():
         return
@@ -209,22 +293,30 @@ def on_val_end(validator):
 
 
 def on_train_epoch_end(trainer):
-    """
-    After train epoch: best-effort logging of per-class train metrics.
-    (Only logs if trainer exposes per-class seg arrays.)
+    """YOLO callback: log per-class train metrics after each epoch.
+
+    Best-effort — skips silently if the trainer does not expose seg arrays.
+
+    Args:
+        trainer: Ultralytics trainer instance passed by the callback system.
     """
     if not _wandb_ready():
         return
 
     log = {}
-    log.update(_collect_overall_metrics(trainer, split="train"))
-    log.update(_collect_per_class_metrics(trainer, split="train"))
+    log.update(_collect_overall_metrics(trainer, split="train_mask"))
+    log.update(_collect_per_class_metrics(trainer, split="train_mask"))
 
     if log:
         wandb.log(log, step=wandb.run.step)
 
 
 def add_custom_callbacks(model):
+    """Register all custom W&B callbacks on a YOLO model.
+
+    Args:
+        model: Ultralytics YOLO model instance.
+    """
     model.add_callback("on_val_batch_end", on_val_batch_end)
     model.add_callback("on_val_end", on_val_end)
     model.add_callback("on_train_epoch_end", on_train_epoch_end)
