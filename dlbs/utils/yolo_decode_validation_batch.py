@@ -8,9 +8,6 @@ visualisation or metric computation.
 """
 import numpy as np
 
-# set True locally to print shape diagnostics during debugging
-DEBUG_PRINT_SHAPES = False
-
 
 def _torch_to_np(x):
     try:
@@ -136,6 +133,7 @@ def gt_instances_from_batch(batch: dict, img_index: int, out_hw: tuple[int, int]
         Tuple (masks_bool, cls_ids) where masks_bool is (N,H,W) bool or None
         and cls_ids is (N,) int or None.
     """
+    print("Entering gt_instances_from_batch with img_index:", img_index)  # Debug print
     names = _normalize_names(names)
     nc = (max(names.keys()) + 1) if names else None
 
@@ -159,7 +157,7 @@ def gt_instances_from_batch(batch: dict, img_index: int, out_hw: tuple[int, int]
         if b is not None:
             b = b.astype(int).reshape(-1)
             if ma.shape[0] == b.shape[0]:
-                print(f"[gt_instances] img={img_index} case=A shape={ma.shape}")
+
                 sel = (b == int(img_index))
                 masks = ma[sel]
                 if masks.size == 0:
@@ -188,7 +186,7 @@ def gt_instances_from_batch(batch: dict, img_index: int, out_hw: tuple[int, int]
 
         # Case C: semantic mask where pixel value == class id
         if nc is not None and u.size and u.max() <= (nc - 1):
-            print(f"[gt_instances] img={img_index} case=C unique_vals={u.tolist()}")
+
             masks = []
             cls_ids = []
             for cid in u.tolist():
@@ -204,7 +202,7 @@ def gt_instances_from_batch(batch: dict, img_index: int, out_hw: tuple[int, int]
 
         # Case B: overlap instance-id mask; no class mapping available
         if bidx is None or cls_all is None:
-            print(f"[gt_instances] img={img_index} case=B (no class mapping)")
+
             masks = []
             for inst_id in u.tolist():
                 if inst_id == 0:
@@ -243,8 +241,6 @@ def gt_instances_from_batch(batch: dict, img_index: int, out_hw: tuple[int, int]
         masks_bool = np.stack(masks, axis=0).astype(bool)
         cls_ids = np.asarray(cls_ids, dtype=int)
 
-        if DEBUG_PRINT_SHAPES:
-            print(f"[gt_decode] img={img_index} overlap: k={k} mask_max={int(u.max())} returned={masks_bool.shape[0]}")
 
         return masks_bool, cls_ids
 
