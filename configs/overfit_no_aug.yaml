@@ -17,11 +17,18 @@ patience: 1000
 seed: 42
 deterministic: true
 
+# force a fixed learning rate 
+warmup_epochs: 0
+warmup_momentum: 0.0
+warmup_bias_lr: 0.0
+lr0: 0.0001
+lrf: 1.0
+
 # Output artefacts
 save: true
 plots: true
 
-# ===== Augmentations AUS =====
+# Turn off augmentation 
 degrees: 0.0
 translate: 0.0
 scale: 0.0

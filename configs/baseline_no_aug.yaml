@@ -14,11 +14,13 @@ data: /mnt/nas05/data01/slg-q1/dlbs/yolo_dataset/data.yaml
 epochs: 50
 imgsz: 640
 batch: 16
-device: cuda          # 0 = erste GPU, "cpu" geht auch
+device: cuda       
 patience: 10
 seed: 42
 deterministic: true
 
+
+# force a fixed learning rate 
 warmup_epochs: 0
 warmup_momentum: 0.0
 warmup_bias_lr: 0.0
@@ -30,7 +32,7 @@ lrf: 1.0
 save: true
 plots: true
 
-# ===== Augmentations AUS =====
+# Turn off augmentation 
 degrees: 0.0
 translate: 0.0
 scale: 0.0
