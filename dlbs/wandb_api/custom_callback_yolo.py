@@ -202,6 +202,11 @@ def on_val_batch_end(validator):
     if not _wandb_ready():
         return
 
+    # skip the final post-training evaluation (final_eval sets trainer.stop=True)
+    trainer = getattr(validator, "trainer", None)
+    if trainer is not None and getattr(trainer, "stop", False):
+        return
+
     try:
         # walk up two frames to reach the Ultralytics validation loop locals
         fr = inspect.currentframe()
@@ -250,10 +255,20 @@ def on_val_batch_end(validator):
 def on_val_end(validator):
     """YOLO callback: log overall and per-class segmentation metrics after validation.
 
+    Skips the final post-training evaluation run to avoid logging a phantom
+    extra epoch (Ultralytics calls the validator once more in final_eval after
+    the training loop has ended).
+
     Args:
         validator: Ultralytics validator instance passed by the callback system.
     """
     if not _wandb_ready():
+        return
+
+    # Skip the final post-training evaluation: final_eval() calls the validator
+    # outside the training loop, so trainer.stop is True at that point.
+    trainer = getattr(validator, "trainer", None)
+    if trainer is not None and getattr(trainer, "stop", False):
         return
 
     log = {"epoch": _epoch_from_validator(validator)}
