@@ -202,9 +202,8 @@ def on_val_batch_end(validator):
     if not _wandb_ready():
         return
 
-    # skip the final post-training evaluation (final_eval sets trainer.stop=True)
-    trainer = getattr(validator, "trainer", None)
-    if trainer is not None and getattr(trainer, "stop", False):
+    # validator.training is False when called from final_eval (no trainer passed)
+    if not getattr(validator, "training", True):
         return
 
     try:
@@ -265,10 +264,8 @@ def on_val_end(validator):
     if not _wandb_ready():
         return
 
-    # Skip the final post-training evaluation: final_eval() calls the validator
-    # outside the training loop, so trainer.stop is True at that point.
-    trainer = getattr(validator, "trainer", None)
-    if trainer is not None and getattr(trainer, "stop", False):
+    # validator.training is False when called from final_eval (no trainer passed)
+    if not getattr(validator, "training", True):
         return
 
     log = {"epoch": _epoch_from_validator(validator)}
