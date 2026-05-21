@@ -6,11 +6,11 @@ for a given validation batch.
 
 Main entry points:
 
-:func:`make_val_grid_pred_gt_orig`
+make_val_grid_pred_gt_orig:
     One combined grid with original image, GT mask, and predicted mask side by
     side for up to ``max_show`` images.
 
-:func:`make_per_class_grids`
+`make_per_class_grids:
     Same layout but one figure per class, useful for inspecting per-class
     prediction quality in W&B.
 """
@@ -195,10 +195,11 @@ def make_val_grid_pred_gt_orig(batch: dict, preds, names, max_show: int = 4):
         for r in range(3):
             axes[r, i].axis("off")
 
-    axes[0, 0].set_ylabel("Pred (by class)", fontsize=12)
-    axes[1, 0].set_ylabel("GT (per instance)", fontsize=12)
-    axes[2, 0].set_ylabel("Original", fontsize=12)
-
+    row_labels = ["Pred (by class)", "GT (per instance)", "Original"]
+    for r, label in enumerate(row_labels):
+        axes[r, 0].set_ylabel(label, fontsize=12)
+        axes[r, 0].yaxis.label.set_visible(True)
+    plt.suptitle("Validation Batch: Predictions vs Ground Truth", fontsize=14)
     plt.tight_layout()
     return fig
 
@@ -267,9 +268,10 @@ def make_per_class_grids(batch: dict, preds, names, max_show: int = 4, class_ids
             for r in range(3):
                 axes[r, i].axis("off")
 
-        axes[0, 0].set_ylabel(f"Pred: {cname}", fontsize=12)
-        axes[1, 0].set_ylabel(f"GT: {cname}\n(per instance)", fontsize=12)
-        axes[2, 0].set_ylabel("Original", fontsize=12)
+        row_labels = [f"Pred: {cname}", f"GT: {cname}\n(per instance)", "Original"]
+        for r, label in enumerate(row_labels):
+            axes[r, 0].set_ylabel(label, fontsize=12)
+            axes[r, 0].yaxis.label.set_visible(True)
         fig.suptitle(f"Class: {cname}", fontsize=14)
         plt.tight_layout()
 
