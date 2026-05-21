@@ -232,18 +232,16 @@ def on_val_batch_end(validator):
         if fig is None:
             return
 
-        wandb.log(
-            {"instance_segmentation/val_first_batch_custom_grid": wandb.Image(fig)},
-            step=wandb.run.step,
-        )
+        # collect all images into one log call to avoid step monotonicity warnings
+        log_payload = {"instance_segmentation/val_first_batch_custom_grid": wandb.Image(fig)}
         plt.close(fig)
 
-        # log one grid per class so per-class predictions are easy to inspect
         grids = make_per_class_grids(batch, preds, names=names, max_show=MAX_SHOW)
         for cls_name, cls_fig in grids.items():
-            key = f"instance_segmentation/val_first_batch_class/{cls_name}"
-            wandb.log({key: wandb.Image(cls_fig)}, step=wandb.run.step)
+            log_payload[f"instance_segmentation/val_first_batch_class/{cls_name}"] = wandb.Image(cls_fig)
             plt.close(cls_fig)
+
+        wandb.log(log_payload)
 
     except Exception as e:
         logger.warning(f"custom val grid failed: {e}")
@@ -262,7 +260,7 @@ def on_val_end(validator):
     log.update(_collect_overall_metrics(validator, split="val"))
     log.update(_collect_per_class_metrics(validator, split="val"))
 
-    wandb.log(log, step=wandb.run.step)
+    wandb.log(log)
 
 
 def on_train_epoch_end(trainer):
@@ -278,7 +276,7 @@ def on_train_epoch_end(trainer):
     log.update(_collect_per_class_metrics(trainer, split="train_mask"))
 
     if log:
-        wandb.log(log, step=wandb.run.step)
+        wandb.log(log)
 
 
 def add_custom_callbacks(model):
