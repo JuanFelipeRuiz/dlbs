@@ -241,7 +241,7 @@ def on_val_batch_end(validator):
             log_payload[f"instance_segmentation/val_first_batch_class/{cls_name}"] = wandb.Image(cls_fig)
             plt.close(cls_fig)
 
-        wandb.log(log_payload)
+        wandb.log(log_payload, step=wandb.run.step)
 
     except Exception as e:
         logger.warning(f"custom val grid failed: {e}")
@@ -260,7 +260,7 @@ def on_val_end(validator):
     log.update(_collect_overall_metrics(validator, split="val"))
     log.update(_collect_per_class_metrics(validator, split="val"))
 
-    wandb.log(log)
+    wandb.log(log, step=wandb.run.step)
 
 
 def on_train_epoch_end(trainer):
@@ -276,7 +276,7 @@ def on_train_epoch_end(trainer):
     log.update(_collect_per_class_metrics(trainer, split="train_mask"))
 
     if log:
-        wandb.log(log)
+        wandb.log(log, step=wandb.run.step)
 
 
 def add_custom_callbacks(model):
