@@ -193,12 +193,14 @@ def make_val_grid_pred_gt_orig(batch: dict, preds, names, max_show: int = 4):
         axes[1, i].imshow(render_black_bg_instances_unique((H, W), gt_masks))
         axes[2, i].imshow(img_uint8)
         for r in range(3):
-            axes[r, i].axis("off")
+            axes[r, i].set_xticks([])
+            axes[r, i].set_yticks([])
+            for spine in axes[r, i].spines.values():
+                spine.set_visible(False)
 
     row_labels = ["Pred (by class)", "GT (per instance)", "Original"]
     for r, label in enumerate(row_labels):
         axes[r, 0].set_ylabel(label, fontsize=12)
-        axes[r, 0].yaxis.label.set_visible(True)
     plt.suptitle("Validation Batch: Predictions vs Ground Truth", fontsize=14)
     plt.tight_layout()
     return fig
@@ -266,12 +268,14 @@ def make_per_class_grids(batch: dict, preds, names, max_show: int = 4, class_ids
             axes[1, i].imshow(render_black_bg_instances_unique((H, W), gm_f))
             axes[2, i].imshow(img_uint8)
             for r in range(3):
-                axes[r, i].axis("off")
+                axes[r, i].set_xticks([])
+                axes[r, i].set_yticks([])
+                for spine in axes[r, i].spines.values():
+                    spine.set_visible(False)
 
         row_labels = [f"Pred: {cname}", f"GT: {cname}\n(per instance)", "Original"]
         for r, label in enumerate(row_labels):
             axes[r, 0].set_ylabel(label, fontsize=12)
-            axes[r, 0].yaxis.label.set_visible(True)
         fig.suptitle(f"Class: {cname}", fontsize=14)
         plt.tight_layout()
 
