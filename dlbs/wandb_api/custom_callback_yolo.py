@@ -1,7 +1,7 @@
 """
 Custom W&B callbacks for YOLO11 segmentation training.
 
-After each validation batch, agrid is logged to W&B
+After each validation batch, a grid is logged to W&B
 showing ground truth masks alongside model predictions. After each epoch, overall
 and per-class mask metrics (precision, recall, mAP50, dice) are logged under the
 val/ and class/ namespaces.
@@ -14,19 +14,11 @@ cannot be run as standalone file or unit test.
 """
 
 import inspect
-import logging
 import numpy as np
 import matplotlib.pyplot as plt
 import wandb
 
 from dlbs.plots.yolo_val_viz import make_val_grid_pred_gt_orig, make_per_class_grids
-
-logger = logging.getLogger(__name__)
-
-
-def _wandb_ready() -> bool:
-    """Check if a W&B run is active."""
-    return wandb.run is not None
 
 
 def _to_arr(x, n):
@@ -146,11 +138,10 @@ def _collect_per_class_metrics(source, split: str) -> dict:
 
 
 def _to_float_or_none(x):
-    """Cast a value to float. Returns None if conversion fails."""
-    try:
-        return float(x)
-    except Exception:
+    """Cast a value to float, preserving missing metrics as None."""
+    if x is None:
         return None
+    return float(x)
 
 
 def _collect_overall_metrics(source, split: str) -> dict:
@@ -199,56 +190,49 @@ def on_val_batch_end(validator):
     # max columns in the grid for the first batch visualization
     MAX_SHOW = 4  
 
-    if not _wandb_ready():
-        return
-
     # validator.training is False when called from final_eval (no trainer passed)
     if not getattr(validator, "training", True):
         return
 
-    try:
-        # walk up two frames to reach the Ultralytics validation loop locals
-        fr = inspect.currentframe()
-        if fr is None or fr.f_back is None or fr.f_back.f_back is None:
-            return
+    # walk up two frames to reach the Ultralytics validation loop locals
+    fr = inspect.currentframe()
+    if fr is None or fr.f_back is None or fr.f_back.f_back is None:
+        return
 
-        v = fr.f_back.f_back.f_locals
+    v = fr.f_back.f_back.f_locals
 
-        # only process the first batch 
-        batch_i = v.get("batch_i", None)
-        if batch_i is None or int(batch_i) != 0:
-            return
+    # only process the first batch 
+    batch_i = v.get("batch_i", None)
+    if batch_i is None or int(batch_i) != 0:
+        return
 
-        batch = v.get("batch", None)
-        preds = v.get("preds", None)
-        if batch is None or preds is None:
-            return
+    batch = v.get("batch", None)
+    preds = v.get("preds", None)
+    if batch is None or preds is None:
+        return
 
-        # normalise names to a dict regardless of how Ultralytics exposes it
-        names = getattr(validator, "names", None)
-        if isinstance(names, list):
-            names = {i: n for i, n in enumerate(names)}
-        elif not isinstance(names, dict):
-            names = {}
+    # normalise names to a dict regardless of how Ultralytics exposes it
+    names = getattr(validator, "names", None)
+    if isinstance(names, list):
+        names = {i: n for i, n in enumerate(names)}
+    elif not isinstance(names, dict):
+        names = {}
 
-        # log the combined pred/gt/orig grid for the whole batch and all classes
-        fig = make_val_grid_pred_gt_orig(batch, preds, names=names, max_show=MAX_SHOW)
-        if fig is None:
-            return
+    # log the combined pred/gt/orig grid for the whole batch and all classes
+    fig = make_val_grid_pred_gt_orig(batch, preds, names=names, max_show=MAX_SHOW)
+    if fig is None:
+        return
 
-        # collect all images into one log call to avoid step monotonicity warnings
-        log_payload = {"instance_segmentation/val_first_batch_custom_grid": wandb.Image(fig)}
-        plt.close(fig)
+    # collect all images into one log call to avoid step monotonicity warnings
+    log_payload = {"instance_segmentation/val_first_batch_custom_grid": wandb.Image(fig)}
+    plt.close(fig)
 
-        grids = make_per_class_grids(batch, preds, names=names, max_show=MAX_SHOW)
-        for cls_name, cls_fig in grids.items():
-            log_payload[f"instance_segmentation/val_first_batch_class/{cls_name}"] = wandb.Image(cls_fig)
-            plt.close(cls_fig)
+    grids = make_per_class_grids(batch, preds, names=names, max_show=MAX_SHOW)
+    for cls_name, cls_fig in grids.items():
+        log_payload[f"instance_segmentation/val_first_batch_class/{cls_name}"] = wandb.Image(cls_fig)
+        plt.close(cls_fig)
 
-        wandb.log(log_payload, step=wandb.run.step)
-
-    except Exception as e:
-        logger.warning(f"custom val grid failed: {e}")
+    wandb.log(log_payload, step=wandb.run.step)
 
 
 def on_val_end(validator):
@@ -261,9 +245,6 @@ def on_val_end(validator):
     Args:
         validator: Ultralytics validator instance passed by the callback system.
     """
-    if not _wandb_ready():
-        return
-
     # validator.training is False when called from final_eval (no trainer passed)
     if not getattr(validator, "training", True):
         return
@@ -278,11 +259,8 @@ def on_val_end(validator):
 def on_train_epoch_end(trainer):
     """YOLO callback: log per-class train metrics after each epoch.
 
-    skips  if the trainer does not expose seg arrays.
+    Skips logging if the trainer does not expose segmentation arrays.
     """
-    if not _wandb_ready():
-        return
-
     log = {}
     log.update(_collect_overall_metrics(trainer, split="train_mask"))
     log.update(_collect_per_class_metrics(trainer, split="train_mask"))
