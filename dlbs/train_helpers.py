@@ -68,6 +68,19 @@ def cli_overrides(args) -> dict:
     return overrides
 
 
+def use_mask_only_fitness():
+    """Drive early stopping and best.pt by mask mAP50-95 only (ignore the box term).
+
+    Ultralytics defines ``SegmentMetrics.fitness`` as ``seg.fitness() + box.fitness()``.
+    For pure instance-segmentation work the box contribution is irrelevant, so we
+    override the property to use the mask metric only. This affects model selection
+    and early stopping only -- all metrics (box and mask) keep being logged unchanged.
+    """
+    from ultralytics.utils.metrics import SegmentMetrics
+
+    SegmentMetrics.fitness = property(lambda self: self.seg.fitness())
+
+
 def set_seed(seed: int):
     """Set random seed for reproducibility."""
     if seed is not None:

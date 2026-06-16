@@ -13,7 +13,14 @@ from pathlib import Path
 from ultralytics import YOLO, settings
 
 from dlbs.evaluation import run_test_validation
-from dlbs.train_helpers import as_bool, cli_overrides, load_cfg, save_resolved_cfg, set_seed
+from dlbs.train_helpers import (
+    as_bool,
+    cli_overrides,
+    load_cfg,
+    save_resolved_cfg,
+    set_seed,
+    use_mask_only_fitness,
+)
 from dlbs.wandb_api.custom_callback_yolo import add_custom_callbacks
 from dlbs.wandb_api.test_logging import log_test_metrics, start_wandb_run
 
@@ -59,6 +66,11 @@ def train(cfg_path: str, overrides: dict):
 
     add_custom_callbacks(model)
     print("Custom wandb callbacks added")
+
+    # Early stopping and best.pt selection should track mask quality only (boxes are
+    # irrelevant for this instance-segmentation task). Logging is unaffected.
+    use_mask_only_fitness()
+
     # Train
     results = model.train(**cfg)
 
