@@ -44,13 +44,16 @@ def _to_arr(x, n):
 
 
 def _metric_container(validator):
-    """Extract the segmentation metric object from a validator or trainer.
+    """Extract the segmentation metric object from a validator, trainer, or metrics result.
+
+    Validators and trainers expose the metrics under ``.metrics``; the object returned by
+    ``model.val()`` already is the metrics result, so fall back to it directly.
 
     Returns the seg or mask metric container, or None if unavailable.
     """
     m = getattr(validator, "metrics", None)
     if m is None:
-        return None
+        m = validator  # source may already be the metrics result (e.g. from model.val())
     return getattr(m, "seg", None) or getattr(m, "mask", None)
 
 
