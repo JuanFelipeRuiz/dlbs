@@ -1,10 +1,10 @@
 #!/bin/bash
-#SBATCH -p performance
-#SBATCH --job-name=dlbs_overfit
+#SBATCH -p p4500
+#SBATCH --job-name=dlbs_reg_aug
 #SBATCH --gpus=1
-#SBATCH --cpus-per-task=8
+#SBATCH --cpus-per-task=16
 #SBATCH --mem=16G
-#SBATCH --time=6:00:00
+#SBATCH --time=4:00:00
 #SBATCH --output=logs/%x_%j.out
 #SBATCH --error=logs/%x_%j.err
 
@@ -21,7 +21,7 @@ export OMP_NUM_THREADS="${SLURM_CPUS_PER_TASK}"
 export WANDB_API_KEY="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"
 
 # ---- Train starten ----
-CONFIG="configs/overfit_no_aug.yaml"
+CONFIG="configs/regularisation-augmentation.yaml"
 
 echo "=== RUN ==="
 echo "Config: ${CONFIG}"
@@ -32,7 +32,7 @@ $PYTHON_BIN -m venv .venv
 source .venv/bin/activate
 
 
-python -m dlbs.train --cfg "${CONFIG}"  --test-split test
+python dlbs/train.py --cfg "${CONFIG}"  --test-split test
 
 echo
 echo "Finished at: $(date)"

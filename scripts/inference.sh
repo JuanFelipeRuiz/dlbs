@@ -15,7 +15,7 @@ PYTHON_BIN=$(which python3)
 
 cd "${SLURM_SUBMIT_DIR:-$PWD}"
 mkdir -p logs
-
+1
 # ---- (Optional) Performance/Determinismus ----
 export OMP_NUM_THREADS="${SLURM_CPUS_PER_TASK}"
 export WANDB_API_KEY="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"
