@@ -1,10 +1,10 @@
 #!/bin/bash
 #SBATCH -p performance
-#SBATCH --job-name=dlbs
+#SBATCH --job-name=dlbs_overfit
 #SBATCH --gpus=1
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=16G
-#SBATCH --time=4:00:00
+#SBATCH --time=6:00:00
 #SBATCH --output=logs/%x_%j.out
 #SBATCH --error=logs/%x_%j.err
 
@@ -32,7 +32,7 @@ $PYTHON_BIN -m venv .venv
 source .venv/bin/activate
 
 
-python train.py --cfg "${CONFIG}"
+python -m dlbs.train --cfg "${CONFIG}"
 
 echo
 echo "Finished at: $(date)"

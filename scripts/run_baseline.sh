@@ -1,10 +1,9 @@
 #!/bin/bash
-#SBATCH -p performance
-#SBATCH -w calc-g-008
+#SBATCH -p p4500
 #SBATCH --job-name=dlbs
 #SBATCH --gpus=1
-#SBATCH --cpus-per-task=8
-#SBATCH --mem=30G
+#SBATCH --cpus-per-task=16
+#SBATCH --mem=16G
 #SBATCH --time=4:00:00
 #SBATCH --output=logs/%x_%j.out
 #SBATCH --error=logs/%x_%j.err
@@ -33,7 +32,7 @@ $PYTHON_BIN -m venv .venv
 source .venv/bin/activate
 
 
-python train.py --cfg "${CONFIG}"
+python dlbs/train.py --cfg "${CONFIG}"  --test-split test
 
 echo
 echo "Finished at: $(date)"

@@ -3,26 +3,29 @@ project: runs/segment
 name: yolo-seg-overfit-no-aug
 exist_ok: false
 
+
 # Logging
 wandb: true
+wandb_entity: dlbs-jf
+wandb_project: runs-segment
 
 # Core
-model: yolo11n-seg.pt
+model: yolo11m-seg.pt
 data: /mnt/nas05/data01/slg-q1/dlbs/dataset_yolo_overfit/data_overfit.yaml
-epochs: 1000
+epochs: 5000
 imgsz: 640
 batch: 1
 device: cuda          # 0 = erste GPU, "cpu" geht auch
-patience: 1000
+patience: 5000
 seed: 42
 deterministic: true
 
 # force a fixed learning rate 
-warmup_epochs: 0
-warmup_momentum: 0.0
-warmup_bias_lr: 0.0
-lr0: 0.0001
-lrf: 1.0
+#warmup_epochs: 0
+#warmup_momentum: 0.0
+#warmup_bias_lr: 0.0
+lr0: 0.002
+#lrf: 1.0
 
 # Output artefacts
 save: true
