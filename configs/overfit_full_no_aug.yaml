@@ -1,0 +1,52 @@
+# Filesystem Output
+project: runs/segment
+name: yolo-seg-overfit-full-no-aug
+exist_ok: false
+
+# Logging
+wandb: true
+wandb_entity: dlbs-jf
+wandb_project: runs-segment
+
+# Core
+model: yolo11s-seg.pt
+data: /mnt/nas05/data01/slg-q1/dlbs/yolo_dataset/data.yaml   # voller Datensatz (wie Baseline)
+epochs: 300
+imgsz: 640
+batch: 16
+device: cuda
+patience: 300        # = epochs -> kein Early-Stopping, soll den ganzen Train-Satz auswendig lernen
+seed: 42
+deterministic: true
+
+# Normale LR-Schedule, damit das Modell die Daten wirklich fitten kann
+lr0: 0.01
+lrf: 0.01
+
+# Keine Regularisierung -> vollen Overfit zulassen
+weight_decay: 0.0
+label_smoothing: 0.0
+
+# Output artefacts
+save: true
+plots: true
+
+# Turn off augmentation
+degrees: 0.0
+translate: 0.0
+scale: 0.0
+shear: 0.0
+perspective: 0.0
+flipud: 0.0
+fliplr: 0.0
+
+hsv_h: 0.0
+hsv_s: 0.0
+hsv_v: 0.0
+
+mosaic: 0.0
+mixup: 0.0
+copy_paste: 0.0
+erasing: 0.0
+auto_augment: null
+close_mosaic: 0
