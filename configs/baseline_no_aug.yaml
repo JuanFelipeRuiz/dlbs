@@ -9,13 +9,13 @@ wandb_entity: dlbs-jf
 wandb_project: runs-segment
 
 # Core
-model: yolo11s-seg.pt
+model: yolo11m-seg.pt
 data: /mnt/nas05/data01/slg-q1/dlbs/yolo_dataset/data.yaml
-epochs: 2000
+epochs: 300
 imgsz: 640
 batch: 16
-device: cuda       
-patience: 100
+device: cuda
+patience: 20
 seed: 42
 deterministic: true
 

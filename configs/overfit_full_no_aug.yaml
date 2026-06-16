@@ -9,7 +9,7 @@ wandb_entity: dlbs-jf
 wandb_project: runs-segment
 
 # Core
-model: yolo11s-seg.pt
+model: yolo11m-seg.pt
 data: /mnt/nas05/data01/slg-q1/dlbs/yolo_dataset/data.yaml   # voller Datensatz (wie Baseline)
 epochs: 300
 imgsz: 640
@@ -19,9 +19,12 @@ patience: 300        # = epochs -> kein Early-Stopping, soll den ganzen Train-Sa
 seed: 42
 deterministic: true
 
-# Normale LR-Schedule, damit das Modell die Daten wirklich fitten kann
+# Konstante LR (kein Decay/Warmup) - konsistent mit Baseline / Stufen 2-4
+warmup_epochs: 0
+warmup_momentum: 0.0
+warmup_bias_lr: 0.0
 lr0: 0.01
-lrf: 0.01
+lrf: 1.0
 
 # Keine Regularisierung -> vollen Overfit zulassen
 weight_decay: 0.0

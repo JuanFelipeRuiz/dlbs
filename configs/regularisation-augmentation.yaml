@@ -5,17 +5,26 @@ exist_ok: false
 
 # Logging
 wandb: true
+wandb_entity: dlbs-jf
+wandb_project: runs-segment
 
 # Core
-model: yolo11n-seg.pt
+model: yolo11m-seg.pt
 data: /mnt/nas05/data01/slg-q1/dlbs/yolo_dataset/data.yaml
-epochs: 50
+epochs: 300
 imgsz: 640
 batch: 16
 device: cuda
-patience: 10
+patience: 20
 seed: 42
 deterministic: true
+
+# force a fixed learning rate (konstante LR wie Baseline; Decay erst im Sweep / Stufe 5)
+warmup_epochs: 0
+warmup_momentum: 0.0
+warmup_bias_lr: 0.0
+lr0: 0.0015
+lrf: 1.0
 
 # Output artefacts
 save: true
