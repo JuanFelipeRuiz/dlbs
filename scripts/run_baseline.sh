@@ -4,11 +4,10 @@
 #SBATCH --gpus=1
 #SBATCH --cpus-per-task=16
 #SBATCH --mem=16G
-#SBATCH --time=4:00:00
+#SBATCH --time=2:00:00
 #SBATCH --output=logs/%x_%j.out
 #SBATCH --error=logs/%x_%j.err
 
-nvidia-smi
 
 set -euo pipefail
 PYTHON_BIN=$(which python3)
@@ -32,7 +31,7 @@ $PYTHON_BIN -m venv .venv
 source .venv/bin/activate
 
 
-python dlbs/train.py --cfg "${CONFIG}"  --test-split test
+python dlbs/train.py --cfg "${CONFIG}"  --test-split test  --name yolo-seg-baseline-no-aug-lr   --set lr0=0.000001
 
 echo
 echo "Finished at: $(date)"

@@ -10,7 +10,7 @@ wandb_entity: dlbs-jf
 wandb_project: runs-segment
 
 # Core
-model: yolo11m-seg.pt
+model: yolo11n-seg.pt
 data: /mnt/nas05/data01/slg-q1/dlbs/dataset_yolo_overfit/data_overfit.yaml
 epochs: 5000
 imgsz: 640

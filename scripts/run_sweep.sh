@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH -p performance
+#SBATCH -p p4500
 #SBATCH --job-name=dlbs_wandb
 #SBATCH --gpus=1
 #SBATCH --cpus-per-task=8
@@ -7,7 +7,7 @@
 #SBATCH --time=4:00:00
 #SBATCH --output=logs/%x_%A_%a.out
 #SBATCH --error=logs/%x_%A_%a.err
-#SBATCH --array=0-6%2
+#SBATCH --array=0-6%1
 
 set -euo pipefail
 

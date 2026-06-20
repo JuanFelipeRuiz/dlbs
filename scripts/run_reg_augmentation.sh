@@ -32,7 +32,9 @@ $PYTHON_BIN -m venv .venv
 source .venv/bin/activate
 
 
-python dlbs/train.py --cfg "${CONFIG}"  --test-split test
+python dlbs/train.py --cfg "${CONFIG}"  --test-split test \
+  --seed 0 \
+  --name yolo-seg-reg-aug-s0
 
 echo
 echo "Finished at: $(date)"

@@ -1,6 +1,6 @@
 # Filesystem Output
 project: runs/segment
-name: yolo-seg-reg-l2-ls
+name: yolo-seg-reg-aug-imgsz1280
 exist_ok: false
 
 # Logging
@@ -12,45 +12,42 @@ wandb_project: runs-segment
 model: yolo11m-seg.pt
 data: /mnt/nas05/data01/slg-q1/dlbs/yolo_dataset/data.yaml
 epochs: 300
-imgsz: 640
-batch: 16
+imgsz: 960
+batch: 8
 device: cuda
-patience: 20
+patience: 10
 seed: 42
 deterministic: true
 
 # force a fixed learning rate (konstante LR wie Baseline; Decay erst im Sweep / Stufe 5)
+# Hinweis: batch halbiert (16 -> 8), lr0 entsprechend linear halbiert (0.0015 -> 0.00075)
+optimizer: AdamW
 warmup_epochs: 0
 warmup_momentum: 0.0
 warmup_bias_lr: 0.0
-lr0: 0.00005
+lr0: 0.0003725
 lrf: 1.0
-optimizer: AdamW
 
 # Output artefacts
 save: true
 plots: true
 
-# ===== Regularization (Optimizer/Loss) =====
-weight_decay: 0.002
-label_smoothing: 0.05
-
-# ===== Augmentations AUS (wie Baseline) =====
-degrees: 0.0
-translate: 0.0
-scale: 0.0
+# ===== Augmentations AN (moderat) =====
+degrees: 7.0
+translate: 0.10
+scale: 0.40
 shear: 0.0
 perspective: 0.0
 flipud: 0.0
-fliplr: 0.0
+fliplr: 0.5
 
-hsv_h: 0.0
-hsv_s: 0.0
-hsv_v: 0.0
+hsv_h: 0.015
+hsv_s: 0.40
+hsv_v: 0.30
 
-mosaic: 0.0
+mosaic: 0.50
 mixup: 0.0
-copy_paste: 0.0
-erasing: 0.0
+copy_paste: 0.10
+erasing: 0.10
 auto_augment: null
-close_mosaic: 0
+close_mosaic: 10

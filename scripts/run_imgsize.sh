@@ -1,6 +1,6 @@
 #!/bin/bash
 #SBATCH -p p4500
-#SBATCH --job-name=dlbs_s0_001_reg_l2_ls
+#SBATCH --job-name=s1-imgsize
 #SBATCH --gpus=1
 #SBATCH --cpus-per-task=16
 #SBATCH --mem=16G
@@ -8,7 +8,6 @@
 #SBATCH --output=logs/%x_%j.out
 #SBATCH --error=logs/%x_%j.err
 
-nvidia-smi
 
 set -euo pipefail
 PYTHON_BIN=$(which python3)
@@ -21,7 +20,7 @@ export OMP_NUM_THREADS="${SLURM_CPUS_PER_TASK}"
 export WANDB_API_KEY="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"
 
 # ---- Train starten ----
-CONFIG="configs/regularisation_l2-ls.yaml"
+CONFIG="configs/imgsz960.yaml"
 
 echo "=== RUN ==="
 echo "Config: ${CONFIG}"
@@ -32,10 +31,7 @@ $PYTHON_BIN -m venv .venv
 source .venv/bin/activate
 
 
-python dlbs/train.py --cfg "${CONFIG}" --test-split test \
-  --set weight_decay=0.001 \
-  --seed 0 \
-  --name yolo-seg-reg-wd-001-s0
+python dlbs/train.py --cfg "${CONFIG}"  --test-split test  --name yolo-seg-img_size-s1   --set lr0=0.0000025 --seed 1
 
 echo
-echo "Finished at: $(date)"
+echo "Finished at: $(date)

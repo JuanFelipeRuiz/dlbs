@@ -9,13 +9,13 @@ wandb_entity: dlbs-jf
 wandb_project: runs-segment
 
 # Core
-model: yolo11m-seg.pt
+model: yolo11n-seg.pt
 data: /mnt/nas05/data01/slg-q1/dlbs/yolo_dataset/data.yaml   # voller Datensatz (wie Baseline)
-epochs: 300
+epochs: 600
 imgsz: 640
 batch: 16
 device: cuda
-patience: 300        # = epochs -> kein Early-Stopping, soll den ganzen Train-Satz auswendig lernen
+patience: 600        # = epochs -> kein Early-Stopping, soll den ganzen Train-Satz auswendig lernen
 seed: 42
 deterministic: true
 
@@ -23,8 +23,11 @@ deterministic: true
 warmup_epochs: 0
 warmup_momentum: 0.0
 warmup_bias_lr: 0.0
-lr0: 0.01
+lr0: 0.00005
 lrf: 1.0
+optimizer: AdamW
+
+
 
 # Keine Regularisierung -> vollen Overfit zulassen
 weight_decay: 0.0
