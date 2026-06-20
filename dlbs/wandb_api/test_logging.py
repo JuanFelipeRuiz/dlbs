@@ -76,9 +76,15 @@ def collect_test_metrics(metrics, prefix: str) -> dict:
     return log
 
 
-def log_test_metrics(metrics, prefix: str, run_meta: dict, finish_after_log: bool):
-    """Log test metrics to the current or resumed W&B run."""
+def log_test_metrics(metrics, prefix: str, run_meta: dict, finish_after_log: bool, extra: dict | None = None):
+    """Log test metrics to the current or resumed W&B run.
+
+    ``extra`` holds optional pre-computed metrics (e.g. stratified city/size buckets)
+    that are merged into the same log call so the run is finished only once.
+    """
     log = collect_test_metrics(metrics, prefix=prefix)
+    if extra:
+        log.update(extra)
     if not log:
         raise ValueError("No test metrics found to log to W&B.")
 

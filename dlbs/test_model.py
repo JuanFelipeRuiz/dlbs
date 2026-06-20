@@ -24,8 +24,15 @@ def test_model(
     device=None,
     workers=None,
     plots: bool = True,
+    stratify: bool = False,
+    objects_csv: str | None = None,
 ):
-    """Validate a trained model on a split and log the metrics to W&B."""
+    """Validate a trained model on a split and log the metrics to W&B.
+
+    When ``stratify`` is True, additionally compute precision/recall/dice broken
+    down by city and by instance-size quartile (one extra inference pass), and log
+    them under the ``strata_{prefix}/`` namespace alongside the standard metrics.
+    """
     prefix = prefix or split
 
     # start_wandb_run reads `name` from cfg and stores the rest as run config.
@@ -49,11 +56,27 @@ def test_model(
         name=name,
     )
 
+    extra = {}
+    if stratify:
+        # imported lazily so the standard path never pulls in cv2/ultralytics here
+        from dlbs.strata_eval import compute_stratified_metrics
+
+        extra = compute_stratified_metrics(
+            model_path,
+            data_yaml,
+            split=split,
+            objects_csv=objects_csv,
+            device=device,
+            prefix=prefix,
+            imgsz=imgsz,
+        )
+
     log_test_metrics(
         metrics,
         prefix=prefix,
         run_meta=run_meta,
         finish_after_log=started_here,
+        extra=extra,
     )
     return metrics
 
@@ -72,6 +95,16 @@ def argparser():
     p.add_argument("--device", type=str)
     p.add_argument("--workers", type=int)
     p.add_argument("--no-plots", action="store_true", help="Disable validation plots")
+    p.add_argument(
+        "--stratify",
+        action="store_true",
+        help="Also log precision/recall/dice broken down by city and by instance-size quartile",
+    )
+    p.add_argument(
+        "--objects-csv",
+        type=str,
+        help="objects.csv for exact GT size buckets (optional; falls back to mask area)",
+    )
     return p
 
 
@@ -90,4 +123,6 @@ if __name__ == "__main__":
         device=args.device,
         workers=args.workers,
         plots=not args.no_plots,
+        stratify=args.stratify,
+        objects_csv=args.objects_csv,
     )
