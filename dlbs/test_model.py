@@ -7,7 +7,7 @@ usage:
 
 import argparse
 
-from dlbs.evaluation import run_test_validation
+from dlbs.utils.metrics_standard import run_test_validation
 from dlbs.wandb_api.test_logging import log_test_metrics, start_wandb_run
 
 
@@ -59,7 +59,7 @@ def test_model(
     extra = {}
     if stratify:
         # imported lazily so the standard path never pulls in cv2/ultralytics here
-        from dlbs.strata_eval import compute_stratified_metrics
+        from dlbs.utils.metrics_stratified import compute_stratified_metrics
 
         extra = compute_stratified_metrics(
             model_path,

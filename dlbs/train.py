@@ -12,8 +12,8 @@ import os
 from pathlib import Path
 from ultralytics import YOLO, settings
 
-from dlbs.evaluation import run_test_validation
-from dlbs.train_helpers import (
+from dlbs.utils.metrics_standard import run_test_validation
+from dlbs.utils.train_helpers import (
     as_bool,
     cli_overrides,
     load_cfg,
@@ -35,7 +35,6 @@ def train(cfg_path: str, overrides: dict):
     seed = cfg.get("seed", None)
     if seed is not None:
         set_seed(seed)
-        # Keep the seed in cfg for Ultralytics.
         cfg["seed"] = seed
 
     # W&B is required for this training entry point.
