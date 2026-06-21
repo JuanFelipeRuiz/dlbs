@@ -1,14 +1,8 @@
 """Stratified test metrics for YOLO11 segmentation.
 
-Computes precision / recall / dice per bucket (overall, per city, per instance-size
-quartile) next to the standard eval_model.val() path. Only runs when test_model is
-called with --stratify; without it nothing changes.
-
-City comes from the Cityscapes filename stem; size from fixed mask-area quartile
-edges (SIZE_QUARTILE_EDGES_PX, derived once from objects.csv). The match criterion
-mirrors the val metrics -- IoU >= 0.5 and conf >= 0.001 -- and the overall value is
-recomputed here with the same helper, so the buckets stay mutually comparable. Dice
-is the harmonic mean of precision and recall.
+Precision / recall / dice per bucket (overall, per city, per instance-size quartile),
+computed only when test_model runs with --stratify. Matching mirrors the standard val
+metrics (IoU >= 0.5, conf >= 0.001); dice is the harmonic mean of precision and recall.
 """
 
 import logging
@@ -24,9 +18,7 @@ logger = logging.getLogger(__name__)
 # Cityscapes images are a fixed size; relative areas map to pixels with this.
 IMG_W, IMG_H = 2048, 1024
 
-# Mask-area quartile edges in PIXELS, computed once from objects.csv over ALL splits.
-# Source: notebooks/2_explore_instacnes_and_labels.ipynb (cell 20). Frozen on purpose
-# so that "Q1" means the same thing regardless of which subset is evaluated.
+# Mask-area quartile edges in PIXELS, Source: notebooks/2_explore_instacnes_and_labels.ipynb (cell 20). Frozen on purpose
 SIZE_QUARTILE_EDGES_PX = (0.5, 238.0, 871.5, 3670.5, 916554.0)
 SIZE_LABELS = ("Q1", "Q2", "Q3", "Q4")
 

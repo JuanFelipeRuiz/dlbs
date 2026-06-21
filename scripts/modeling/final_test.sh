@@ -16,7 +16,6 @@ cd "${SLURM_SUBMIT_DIR:-$PWD}"
 mkdir -p logs
 
 export OMP_NUM_THREADS="${SLURM_CPUS_PER_TASK}"
-export WANDB_API_KEY="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"
 
 $PYTHON_BIN -m venv .venv
 source .venv/bin/activate
