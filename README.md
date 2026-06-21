@@ -20,10 +20,13 @@ dlbs/
 │  │  └─ test_logging.py                # Log test-set metrics to W&B (used by train/test_model)
 │  ├─ train.py           # Training entry point
 │  └─ test_model.py      # Model evaluation entry point
+├─ html_notebooks/       # Exploratory analysis and results/hypothesis html-notebooks
 ├─ notebooks/            # Exploratory analysis and results/hypothesis notebooks
 ├─ scripts/              # Shell scripts for data transformation and modeling runs (SLURM)
 ├─ setup.py
 ├─ LICENSE
+├─ report_dlbs_juan_florian.pdf
+├─ presentation.pptx
 └─ README.md
 ```
 
