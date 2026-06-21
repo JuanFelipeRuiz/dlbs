@@ -1,0 +1,19 @@
+nc: 17
+names:
+  0: bicycle
+  1: bicyclegroup
+  2: bus
+  3: car
+  4: caravan
+  5: cargroup
+  6: ego vehicle
+  7: motorcycle
+  8: motorcyclegroup
+  9: person
+  10: persongroup
+  11: rider
+  12: ridergroup
+  13: trailer
+  14: train
+  15: truck
+  16: truckgroup
